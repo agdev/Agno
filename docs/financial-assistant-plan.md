@@ -73,81 +73,88 @@ class FinancialAssistantWorkflow(Workflow):
     - Comprehensive Report Flow (report path)
     """
     
-    # Workflow Agents
-    router_agent = Agent(
-        name="Router Agent",
-        role="Categorize user requests for appropriate workflow path",
-        model=Claude(id="claude-sonnet-4-20250514"),
-        instructions=[
-            "Categorize user requests into: income_statement, company_financials, stock_price, report, or chat",
-            "Use conversation context from session for better categorization",
-            "Return only the category name"
-        ],
-        structured_output=True
-    )
+    def __init__(self, llm=None):
+        super().__init__()
+        self.llm = llm or Claude(id="claude-sonnet-4-20250514")
+        self._initialize_agents()
     
-    symbol_extraction_agent = Agent(
-        name="Symbol Extraction Agent", 
-        role="Extract stock symbols from natural language queries",
-        model=OpenAIChat(id="gpt-4o"),
-        tools=[FinancialModelingPrepTools(symbol_search=True)],
-        instructions=[
-            "Extract stock ticker symbols from user queries",
-            "Handle company names and convert to proper symbols",
-            "Return 'UNKNOWN' if no valid symbol can be extracted"
-        ]
-    )
-    
-    # Data Retrieval Agents
-    income_statement_agent = Agent(
-        name="Income Statement Agent",
-        role="Retrieve and format income statement data",
-        model=Claude(id="claude-sonnet-4-20250514"),
-        tools=[FinancialModelingPrepTools(income_statement=True)],
-        instructions=["Fetch income statement for given symbol", "Format as structured markdown"]
-    )
-    
-    company_financials_agent = Agent(
-        name="Company Financials Agent", 
-        role="Retrieve and format company financial metrics",
-        model=Claude(id="claude-sonnet-4-20250514"),
-        tools=[FinancialModelingPrepTools(company_financials=True)],
-        instructions=["Fetch company financials for given symbol", "Format key metrics clearly"]
-    )
-    
-    stock_price_agent = Agent(
-        name="Stock Price Agent",
-        role="Retrieve and format current stock price data", 
-        model=Claude(id="claude-sonnet-4-20250514"),
-        tools=[FinancialModelingPrepTools(stock_price=True)],
-        instructions=["Fetch current stock price data", "Include price movement and basic analytics"]
-    )
-    
-    # Report Generation Agent
-    report_generation_agent = Agent(
-        name="Report Generation Agent",
-        role="Create comprehensive financial reports from aggregated data",
-        model=Claude(id="claude-sonnet-4-20250514"),
-        instructions=[
-            "Combine income statement, company financials, and stock price data",
-            "Generate structured markdown report with clear sections",
-            "Include analysis and key insights",
-            "Ensure professional formatting"
-        ],
-        markdown=True
-    )
-    
-    # Chat Agent
-    chat_agent = Agent(
-        name="Chat Agent",
-        role="Handle conversational interactions and general queries",
-        model=OpenAIChat(id="gpt-4o"),
-        instructions=[
-            "Provide conversational responses about finance",
-            "Offer educational content when appropriate",
-            "Keep responses informative but concise"
-        ]
-    )
+    def _initialize_agents(self):
+        """Initialize all workflow agents with the provided LLM"""
+        # Workflow Agents
+        self.router_agent = Agent(
+            name="Router Agent",
+            role="Categorize user requests for appropriate workflow path",
+            model=self.llm,
+            instructions=[
+                "Categorize user requests into: income_statement, company_financials, stock_price, report, or chat",
+                "Use conversation context from session for better categorization",
+                "Return only the category name"
+            ],
+            structured_output=True
+        )
+        
+        self.symbol_extraction_agent = Agent(
+            name="Symbol Extraction Agent", 
+            role="Extract stock symbols from natural language queries",
+            model=self.llm,
+            tools=[FinancialModelingPrepTools(symbol_search=True)],
+            instructions=[
+                "Extract stock ticker symbols from user queries",
+                "Handle company names and convert to proper symbols",
+                "Return 'UNKNOWN' if no valid symbol can be extracted"
+            ]
+        )
+        
+        # Data Retrieval Agents
+        self.income_statement_agent = Agent(
+            name="Income Statement Agent",
+            role="Retrieve and format income statement data",
+            model=self.llm,
+            tools=[FinancialModelingPrepTools(income_statement=True)],
+            instructions=["Fetch income statement for given symbol", "Format as structured markdown"]
+        )
+        
+        self.company_financials_agent = Agent(
+            name="Company Financials Agent", 
+            role="Retrieve and format company financial metrics",
+            model=self.llm,
+            tools=[FinancialModelingPrepTools(company_financials=True)],
+            instructions=["Fetch company financials for given symbol", "Format key metrics clearly"]
+        )
+        
+        self.stock_price_agent = Agent(
+            name="Stock Price Agent",
+            role="Retrieve and format current stock price data", 
+            model=self.llm,
+            tools=[FinancialModelingPrepTools(stock_price=True)],
+            instructions=["Fetch current stock price data", "Include price movement and basic analytics"]
+        )
+        
+        # Report Generation Agent
+        self.report_generation_agent = Agent(
+            name="Report Generation Agent",
+            role="Create comprehensive financial reports from aggregated data",
+            model=self.llm,
+            instructions=[
+                "Combine income statement, company financials, and stock price data",
+                "Generate structured markdown report with clear sections",
+                "Include analysis and key insights",
+                "Ensure professional formatting"
+            ],
+            markdown=True
+        )
+        
+        # Chat Agent
+        self.chat_agent = Agent(
+            name="Chat Agent",
+            role="Handle conversational interactions and general queries",
+            model=self.llm,
+            instructions=[
+                "Provide conversational responses about finance",
+                "Offer educational content when appropriate",
+                "Keep responses informative but concise"
+            ]
+        )
     
     def run(self, message: str) -> Iterator[RunResponse]:
         """
@@ -251,18 +258,33 @@ Router → where_to() → 'alone' → Symbol Extraction (Alone) → where_to_alo
 
 **New Agno Workflow Implementation**:
 ```python
-# Workflow steps for single information requests
-WorkflowStep("router", router_agent),  # Categorizes: income_statement|company_financials|stock_price
-WorkflowStep("symbol_extraction_alone", symbol_extraction_agent),  # Extracts symbol
-WorkflowCondition(  # Routes to specific data agent based on category
-    condition=lambda state: state.get('category') == 'income_statement',
-    true_path="income_statement_standalone",
-    false_path=WorkflowCondition(
-        condition=lambda state: state.get('category') == 'company_financials',
-        true_path="company_financials_standalone",
-        false_path="stock_price_standalone"  # Default for stock_price
-    )
-)
+def _run_alone_flow(self, message: str, category: str) -> Iterator[RunResponse]:
+    """Single Information Flow - Direct path to specific data"""
+    
+    # Extract symbol
+    symbol_response = self.symbol_extraction_agent.run(message)
+    symbol = symbol_response.content.strip()
+    
+    if symbol == 'UNKNOWN':
+        yield RunResponse(run_id=self.run_id, content="Could not extract a valid stock symbol from your request.")
+        return
+        
+    self.session_state['symbol'] = symbol
+    
+    # Route to specific data agent based on category
+    if category == 'income_statement':
+        response = self.income_statement_agent.run(f"Get income statement for {symbol}")
+    elif category == 'company_financials':
+        response = self.company_financials_agent.run(f"Get company financials for {symbol}")
+    elif category == 'stock_price':
+        response = self.stock_price_agent.run(f"Get stock price for {symbol}")
+    else:
+        yield RunResponse(run_id=self.run_id, content="Invalid category for data request.")
+        return
+    
+    # Cache and yield result
+    self.session_state['last_symbol'] = symbol
+    yield RunResponse(run_id=self.run_id, content=response.content)
 ```
 
 **Key Characteristics**:
@@ -281,20 +303,39 @@ Router → where_to() → 'report' → Symbol Extraction (Report) → is_there_s
 
 **New Agno Workflow Implementation**:
 ```python
-# Workflow steps for comprehensive reports
-WorkflowStep("router", router_agent),  # Categorizes as 'report'
-WorkflowStep("symbol_extraction_report", symbol_extraction_agent),  # Extracts symbol
-WorkflowCondition(  # Validates symbol exists
-    condition=lambda state: state.get('symbol') != 'UNKNOWN',
-    true_path="parallel_data_collection",
-    false_path="error"
-),
-WorkflowParallel("parallel_data_collection", [  # Parallel execution
-    income_statement_agent,
-    company_financials_agent,
-    stock_price_agent
-]),
-WorkflowStep("report_generation", report_generation_agent)  # Aggregates all data
+def _run_report_flow(self, message: str) -> Iterator[RunResponse]:
+    """Comprehensive Report Flow - Parallel data collection + aggregation"""
+    
+    # Extract symbol
+    symbol_response = self.symbol_extraction_agent.run(message)
+    symbol = symbol_response.content.strip()
+    
+    if symbol == 'UNKNOWN':
+        yield RunResponse(run_id=self.run_id, content="Could not extract a valid stock symbol from your request.")
+        return
+        
+    self.session_state['symbol'] = symbol
+    
+    # Parallel data collection
+    income_response = self.income_statement_agent.run(f"Get income statement for {symbol}")
+    financials_response = self.company_financials_agent.run(f"Get company financials for {symbol}")
+    price_response = self.stock_price_agent.run(f"Get stock price for {symbol}")
+    
+    # Aggregate data for report generation
+    report_data = f"""
+    Income Statement Data: {income_response.content}
+    
+    Company Financials Data: {financials_response.content}
+    
+    Stock Price Data: {price_response.content}
+    """
+    
+    # Generate comprehensive report
+    report_response = self.report_generation_agent.run(f"Generate a comprehensive financial report for {symbol} using this data: {report_data}")
+    
+    # Cache and yield final result
+    self.session_state['last_symbol'] = symbol
+    yield RunResponse(run_id=self.run_id, content=report_response.content)
 ```
 
 **Key Characteristics**:
@@ -312,8 +353,10 @@ Router → where_to() → 'chat' → Chat Node → Final Answer
 
 **New Agno Workflow Implementation**:
 ```python
-WorkflowStep("router", router_agent),  # Categorizes as 'chat'
-WorkflowStep("chat", chat_agent)       # Direct conversational response
+def _run_chat_flow(self, message: str) -> Iterator[RunResponse]:
+    """Chat Flow - Direct conversational response"""
+    response = self.chat_agent.run(message)
+    yield RunResponse(run_id=self.run_id, content=response.content)
 ```
 
 **Key Characteristics**:
@@ -435,10 +478,10 @@ class FinancialAssistantState(BaseModel):
           # Implementation from current classes/stock_price.py
   ```
 
-#### 3.2 YFinance Integration
-- **Current**: Custom wrappers around financial APIs
-- **New**: Use built-in YFinanceTools + custom FinancialModelingPrepTools
-- **Benefits**: Reduced code maintenance, better error handling
+#### 3.2 Financial Data Integration
+- **Current**: Custom wrappers around Financial Modeling Prep APIs
+- **New**: Unified FinancialModelingPrepTools toolkit
+- **Benefits**: Reduced code maintenance, better error handling, consistent API interface
 
 ### Phase 4: User Interface Integration
 **Objective**: Integrate Agno agents with Streamlit interface
@@ -676,5 +719,54 @@ Once the migration is complete, the following enhancements become possible with 
 - Horizontal scaling with multiple agent instances
 - Load balancing across agent teams
 - Automatic scaling based on demand
+
+## Suggested Project Structure
+
+```
+financial-assistant/
+├── src/
+│   ├── __init__.py
+│   ├── main.py                     # Entry point and Streamlit app
+│   ├── workflow/
+│   │   ├── __init__.py
+│   │   └── financial_assistant.py  # FinancialAssistantWorkflow class
+│   ├── agents/
+│   │   ├── __init__.py
+│   │   ├── router.py              # Router agent
+│   │   ├── symbol_extraction.py   # Symbol extraction agent
+│   │   ├── financial_data.py      # Financial data agents
+│   │   ├── report_generation.py   # Report generation agent
+│   │   └── chat.py               # Chat agent
+│   ├── tools/
+│   │   ├── __init__.py
+│   │   └── financial_modeling_prep.py  # FinancialModelingPrepTools
+│   ├── models/
+│   │   ├── __init__.py
+│   │   └── schemas.py            # Pydantic models for structured data
+│   └── config/
+│       ├── __init__.py
+│       └── settings.py           # Configuration management
+├── tests/
+│   ├── __init__.py
+│   ├── test_workflow.py          # Workflow tests
+│   ├── test_agents.py            # Agent tests
+│   └── test_tools.py             # Tool tests
+├── docs/
+│   ├── financial-assistant-plan.md
+│   └── implementation-todo.md
+├── requirements.txt
+├── .env.example
+├── .gitignore
+└── README.md
+```
+
+### Key Structural Components
+
+1. **src/workflow/**: Contains the main FinancialAssistantWorkflow class
+2. **src/agents/**: Individual agent implementations for better organization
+3. **src/tools/**: Custom tools including FinancialModelingPrepTools
+4. **src/models/**: Pydantic models for type safety and structured data
+5. **src/config/**: Configuration and environment management
+6. **tests/**: Comprehensive test suite for all components
 
 This implementation plan provides a comprehensive roadmap for migrating from LangGraph/LangChain to Agno while preserving all existing functionality and gaining significant performance improvements.
