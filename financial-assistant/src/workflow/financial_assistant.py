@@ -5,15 +5,13 @@ This module implements the main FinancialAssistantWorkflow class that orchestrat
 the entire financial assistant application using Agno's Level 5 Agentic Workflow pattern.
 """
 
-from typing import Iterator, Optional
+from typing import Iterator, Any
 from agno.agent import Agent, RunResponse
 from agno.workflow import Workflow
 from agno.models.anthropic import Claude
-from agno.models.openai import OpenAIChat
 
 # Import tools and models
 from tools.financial_modeling_prep import FinancialModelingPrepTools
-from models.schemas import RouterResult
 
 
 class FinancialAssistantWorkflow(Workflow):
@@ -40,8 +38,16 @@ class FinancialAssistantWorkflow(Workflow):
     def _initialize_agents(self):
         """Initialize all workflow agents with the provided LLM"""
         
+        # Get FMP API key from environment or session state
+        fmp_api_key = None
+        try:
+            import streamlit as st
+            fmp_api_key = st.session_state.get("fmp_api_key")
+        except ImportError:
+            pass  # Streamlit not available, that's OK
+        
         # Initialize Financial Modeling Prep Tools
-        self.fmp_tools = FinancialModelingPrepTools()
+        self.fmp_tools = FinancialModelingPrepTools(api_key=fmp_api_key)
         
         # Router Agent - Categorizes user requests
         self.router_agent = Agent(
@@ -153,7 +159,7 @@ class FinancialAssistantWorkflow(Workflow):
             ]
         )
     
-    def run(self, message: str) -> Iterator[RunResponse]:
+    def run(self, **kwargs: Any) -> Iterator[RunResponse]:  # type: ignore[override]
         """
         Main workflow execution implementing the three flow patterns:
         1. Single Information Flow (alone path) 
@@ -161,18 +167,27 @@ class FinancialAssistantWorkflow(Workflow):
         3. Chat Flow
         
         Args:
-            message: User's input message/query
+            **kwargs: Keyword arguments including 'message' for user input
             
         Yields:
             RunResponse: Stream of responses from the workflow execution
         """
+        
+        # Extract message from kwargs
+        message = kwargs.get('message', '')
+        if not message:
+            yield RunResponse(run_id=self.run_id, content="No message provided")
+            return
         
         # Step 1: Route the request
         conversation_summary = self.session_state.get('conversation_summary', '')
         category_response = self.router_agent.run(
             f"User request: {message}\nConversation summary: {conversation_summary}"
         )
-        category = category_response.content.strip().lower()
+        
+        # Handle potential None content
+        category_content = category_response.content if category_response.content else "chat"
+        category = category_content.strip().lower()
         self.session_state['category'] = category
         
         # Step 2: Conditional flow based on category
@@ -200,7 +215,8 @@ class FinancialAssistantWorkflow(Workflow):
         
         # Extract symbol
         symbol_response = self.symbol_extraction_agent.run(message)
-        symbol = symbol_response.content.strip()
+        symbol_content = symbol_response.content if symbol_response.content else "UNKNOWN"
+        symbol = symbol_content.strip()
         
         if symbol == 'UNKNOWN':
             yield RunResponse(
@@ -254,7 +270,8 @@ class FinancialAssistantWorkflow(Workflow):
         
         # Extract symbol
         symbol_response = self.symbol_extraction_agent.run(message)
-        symbol = symbol_response.content.strip()
+        symbol_content = symbol_response.content if symbol_response.content else "UNKNOWN"
+        symbol = symbol_content.strip()
         
         if symbol == 'UNKNOWN':
             yield RunResponse(

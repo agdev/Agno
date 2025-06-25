@@ -6,21 +6,28 @@ throughout the financial assistant application.
 """
 
 from datetime import datetime
-from typing import Optional, Literal, Dict, Any
-from decimal import Decimal
+from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class RouterResult(BaseModel):
     """Result from the router agent categorizing user requests"""
-    category: Literal["income_statement", "company_financials", "stock_price", "report", "chat"]
-    confidence: Optional[float] = Field(None, ge=0, le=1, description="Confidence score for routing decision")
-    reasoning: Optional[str] = Field(None, description="Brief explanation of routing decision")
+
+    category: Literal[
+        "income_statement", "company_financials", "stock_price", "report", "chat"
+    ]
+    confidence: Optional[float] = Field(
+        None, ge=0, le=1, description="Confidence score for routing decision"
+    )
+    reasoning: Optional[str] = Field(
+        None, description="Brief explanation of routing decision"
+    )
 
 
 class SymbolSearchResult(BaseModel):
     """Result from symbol search/extraction"""
+
     symbol: str = Field(..., description="Stock ticker symbol")
     company_name: Optional[str] = Field(None, description="Full company name")
     exchange: Optional[str] = Field(None, description="Stock exchange")
@@ -30,6 +37,7 @@ class SymbolSearchResult(BaseModel):
 
 class IncomeStatementData(BaseModel):
     """Income statement financial data"""
+
     symbol: str
     date: str
     period: str  # 'annual' or 'quarter'
@@ -45,8 +53,11 @@ class IncomeStatementData(BaseModel):
     total_operating_expenses: float = Field(0, description="Total operating expenses")
     success: bool = Field(True, description="Whether data fetch was successful")
     error: Optional[str] = Field(None, description="Error message if fetch failed")
-    
-    @validator('revenue', 'gross_profit', 'operating_income', 'net_income', pre=True)
+
+    @field_validator(
+        "revenue", "gross_profit", "operating_income", "net_income", mode="before"
+    )
+    @classmethod
     def convert_to_float(cls, v):
         """Convert numeric values to float, handling None values"""
         if v is None:
@@ -56,6 +67,7 @@ class IncomeStatementData(BaseModel):
 
 class CompanyFinancialsData(BaseModel):
     """Company financial metrics and ratios"""
+
     symbol: str
     company_name: str = Field("Unknown", description="Company name")
     market_cap: float = Field(0, description="Market capitalization")
@@ -77,8 +89,9 @@ class CompanyFinancialsData(BaseModel):
     date: str = Field("Unknown", description="Date of data")
     success: bool = Field(True, description="Whether data fetch was successful")
     error: Optional[str] = Field(None, description="Error message if fetch failed")
-    
-    @validator('market_cap', 'enterprise_value', 'working_capital', pre=True)
+
+    @field_validator("market_cap", "enterprise_value", "working_capital", mode="before")
+    @classmethod
     def convert_large_numbers(cls, v):
         """Convert large numbers to float, handling None values"""
         if v is None:
@@ -88,11 +101,14 @@ class CompanyFinancialsData(BaseModel):
 
 class StockPriceData(BaseModel):
     """Current stock price and trading data"""
+
     symbol: str
     name: str = Field("Unknown", description="Company name")
     price: float = Field(0, description="Current stock price")
     change: float = Field(0, description="Price change from previous close")
-    change_percent: float = Field(0, description="Percentage change from previous close")
+    change_percent: float = Field(
+        0, description="Percentage change from previous close"
+    )
     previous_close: float = Field(0, description="Previous closing price")
     open: float = Field(0, description="Opening price")
     high: float = Field(0, description="Day's high")
@@ -108,15 +124,19 @@ class StockPriceData(BaseModel):
     timestamp: int = Field(0, description="Data timestamp")
     success: bool = Field(True, description="Whether data fetch was successful")
     error: Optional[str] = Field(None, description="Error message if fetch failed")
-    
-    @validator('price', 'change', 'previous_close', 'open', 'high', 'low', pre=True)
+
+    @field_validator(
+        "price", "change", "previous_close", "open", "high", "low", mode="before"
+    )
+    @classmethod
     def convert_prices(cls, v):
         """Convert price values to float, handling None values"""
         if v is None:
             return 0.0
         return float(v)
-    
-    @validator('volume', 'avg_volume', pre=True)
+
+    @field_validator("volume", "avg_volume", mode="before")
+    @classmethod
     def convert_volumes(cls, v):
         """Convert volume values to int, handling None values"""
         if v is None:
@@ -126,9 +146,12 @@ class StockPriceData(BaseModel):
 
 class CompanyProfileData(BaseModel):
     """Basic company profile information"""
+
     symbol: str
     company_name: str = Field("Unknown", description="Company name")
-    description: str = Field("No description available", description="Company description")
+    description: str = Field(
+        "No description available", description="Company description"
+    )
     industry: str = Field("Unknown", description="Industry")
     sector: str = Field("Unknown", description="Sector")
     website: str = Field("", description="Company website")
@@ -143,29 +166,39 @@ class CompanyProfileData(BaseModel):
 
 class FinancialReport(BaseModel):
     """Comprehensive financial report combining multiple data sources"""
+
     symbol: str
     company_name: str
     generated_at: datetime = Field(default_factory=datetime.now)
-    
+
     # Core financial data
     income_statement: Optional[IncomeStatementData] = None
     company_financials: Optional[CompanyFinancialsData] = None
     stock_price: Optional[StockPriceData] = None
     company_profile: Optional[CompanyProfileData] = None
-    
+
     # Report content
     executive_summary: str = Field("", description="Executive summary of the report")
-    key_insights: list[str] = Field(default_factory=list, description="Key insights and findings")
-    strengths: list[str] = Field(default_factory=list, description="Company strengths")
-    weaknesses: list[str] = Field(default_factory=list, description="Areas of concern")
-    opportunities: list[str] = Field(default_factory=list, description="Growth opportunities")
-    
+    key_insights: List[str] = Field(
+        default_factory=list, description="Key insights and findings"
+    )
+    strengths: List[str] = Field(default_factory=list, description="Company strengths")
+    weaknesses: List[str] = Field(default_factory=list, description="Areas of concern")
+    opportunities: List[str] = Field(
+        default_factory=list, description="Growth opportunities"
+    )
+
     # Report metadata
-    data_quality_score: float = Field(1.0, ge=0, le=1, description="Quality score of underlying data")
-    completeness_score: float = Field(1.0, ge=0, le=1, description="Completeness of available data")
+    data_quality_score: float = Field(
+        1.0, ge=0, le=1, description="Quality score of underlying data"
+    )
+    completeness_score: float = Field(
+        1.0, ge=0, le=1, description="Completeness of available data"
+    )
     report_markdown: str = Field("", description="Full report in markdown format")
-    
-    @validator('data_quality_score', 'completeness_score')
+
+    @field_validator("data_quality_score", "completeness_score")
+    @classmethod
     def validate_scores(cls, v):
         """Ensure scores are between 0 and 1"""
         return max(0.0, min(1.0, v))
@@ -173,29 +206,40 @@ class FinancialReport(BaseModel):
 
 class WorkflowState(BaseModel):
     """State management for the financial assistant workflow"""
+
     request: str = Field("", description="Original user request")
     category: Optional[str] = Field(None, description="Request category from router")
     symbol: Optional[str] = Field(None, description="Extracted stock symbol")
-    workflow_path: Optional[str] = Field(None, description="Workflow path taken (alone/report/chat)")
-    data_category: Optional[str] = Field(None, description="Specific data category for alone path")
-    
+    workflow_path: Optional[str] = Field(
+        None, description="Workflow path taken (alone/report/chat)"
+    )
+    data_category: Optional[str] = Field(
+        None, description="Specific data category for alone path"
+    )
+
     # Conversation context
     conversation_summary: str = Field("", description="Summary of conversation history")
     last_symbol: Optional[str] = Field(None, description="Last used stock symbol")
-    user_preferences: Dict[str, Any] = Field(default_factory=dict, description="User preferences")
-    
+    user_preferences: Dict[str, Any] = Field(
+        default_factory=dict, description="User preferences"
+    )
+
     # Data cache
-    cached_data: Dict[str, Any] = Field(default_factory=dict, description="Cached financial data")
-    
+    cached_data: Dict[str, Any] = Field(
+        default_factory=dict, description="Cached financial data"
+    )
+
     # Workflow control
-    parallel_complete: bool = Field(False, description="Whether parallel data collection is complete")
+    parallel_complete: bool = Field(
+        False, description="Whether parallel data collection is complete"
+    )
     error_count: int = Field(0, description="Number of errors encountered")
     retry_count: int = Field(0, description="Number of retries attempted")
-    
+
     # Timestamps
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
-    
+
     def update_timestamp(self):
         """Update the updated_at timestamp"""
         self.updated_at = datetime.now()
@@ -203,22 +247,30 @@ class WorkflowState(BaseModel):
 
 class AgentResponse(BaseModel):
     """Standard response format for individual agents"""
+
     agent_name: str = Field(..., description="Name of the responding agent")
     content: str = Field(..., description="Agent response content")
-    data: Optional[Dict[str, Any]] = Field(None, description="Structured data if applicable")
+    data: Optional[Dict[str, Any]] = Field(
+        None, description="Structured data if applicable"
+    )
     success: bool = Field(True, description="Whether agent execution was successful")
     error: Optional[str] = Field(None, description="Error message if execution failed")
-    execution_time: Optional[float] = Field(None, description="Execution time in seconds")
+    execution_time: Optional[float] = Field(
+        None, description="Execution time in seconds"
+    )
     tokens_used: Optional[int] = Field(None, description="Number of tokens used")
-    
+
     # Response metadata
-    confidence: Optional[float] = Field(None, ge=0, le=1, description="Confidence in response")
-    sources: list[str] = Field(default_factory=list, description="Data sources used")
+    confidence: Optional[float] = Field(
+        None, ge=0, le=1, description="Confidence in response"
+    )
+    sources: List[str] = Field(default_factory=list, description="Data sources used")
     timestamp: datetime = Field(default_factory=datetime.now)
 
 
 class ErrorInfo(BaseModel):
     """Error information for debugging and monitoring"""
+
     error_type: str = Field(..., description="Type/category of error")
     error_message: str = Field(..., description="Detailed error message")
     context: Dict[str, Any] = Field(default_factory=dict, description="Error context")
@@ -228,5 +280,7 @@ class ErrorInfo(BaseModel):
 
 
 # Type aliases for convenience
-FinancialDataType = IncomeStatementData | CompanyFinancialsData | StockPriceData | CompanyProfileData
-WorkflowResponse = str | FinancialReport | AgentResponse
+FinancialDataType = Union[
+    IncomeStatementData, CompanyFinancialsData, StockPriceData, CompanyProfileData
+]
+WorkflowResponse = Union[str, FinancialReport, AgentResponse]

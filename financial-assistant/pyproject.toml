@@ -7,6 +7,7 @@ requires-python = ">=3.11"
 dependencies = [
     "agno>=1.6.4",
     "anthropic>=0.55.0",
+    "groq>=0.28.0",
     "openai>=1.91.0",
     "pydantic>=2.11.7",
     "python-dotenv>=1.1.1",
@@ -17,6 +18,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "ipykernel>=6.29.5",
+    "pyright>=1.1.402",
     "pytest>=8.4.1",
     "pytest-mock>=3.14.1",
 ]

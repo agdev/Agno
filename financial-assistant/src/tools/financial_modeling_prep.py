@@ -7,7 +7,7 @@ integration with the Financial Modeling Prep API for fetching financial data.
 
 import os
 import json
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Union
 from datetime import datetime
 
 import requests
@@ -23,18 +23,30 @@ class FinancialModelingPrepTools(Toolkit):
     including income statements, company financials, stock prices, and symbol search.
     """
     
-    def __init__(self):
+    def __init__(self, api_key: Optional[str] = None):
         super().__init__(name="financial_modeling_prep")
-        self.api_key = os.getenv("FINANCIAL_MODELING_PREP_API_KEY")
+        
+        # Get API key from parameter, environment, or session state
+        self.api_key = api_key or os.getenv("FINANCIAL_MODELING_PREP_API_KEY")
+        
+        # If still no API key, try to get from session state (requires streamlit)
+        if not self.api_key:
+            try:
+                import streamlit as st
+                self.api_key = st.session_state.get("fmp_api_key")
+            except ImportError:
+                pass  # Streamlit not available, that's OK
+        
         self.base_url = "https://financialmodelingprep.com/api/v3"
         
         if not self.api_key:
             raise ValueError(
-                "FINANCIAL_MODELING_PREP_API_KEY environment variable is required. "
-                "Please set your Financial Modeling Prep API key."
+                "Financial Modeling Prep API key is required. "
+                "Please set FINANCIAL_MODELING_PREP_API_KEY environment variable "
+                "or provide api_key parameter, or enter it in the UI."
             )
     
-    def _make_request(self, endpoint: str, params: Optional[Dict] = None) -> Dict[str, Any]:
+    def _make_request(self, endpoint: str, params: Optional[Dict] = None) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
         """
         Make HTTP request to Financial Modeling Prep API
         
@@ -43,7 +55,7 @@ class FinancialModelingPrepTools(Toolkit):
             params: Optional query parameters
             
         Returns:
-            Dict containing API response data
+            List or Dict containing API response data
             
         Raises:
             Exception: If API request fails
@@ -79,7 +91,7 @@ class FinancialModelingPrepTools(Toolkit):
                 symbol = query.upper()
                 # Validate symbol exists by fetching basic profile
                 profile_data = self._make_request(f"profile/{symbol}")
-                if profile_data and len(profile_data) > 0:
+                if profile_data and isinstance(profile_data, list) and len(profile_data) > 0:
                     company = profile_data[0]
                     return {
                         "symbol": symbol,
@@ -91,7 +103,7 @@ class FinancialModelingPrepTools(Toolkit):
             # Search by company name
             search_data = self._make_request("search", {"query": query, "limit": 5})
             
-            if search_data and len(search_data) > 0:
+            if search_data and isinstance(search_data, list) and len(search_data) > 0:
                 # Return the first (most relevant) result
                 result = search_data[0]
                 return {
@@ -136,7 +148,7 @@ class FinancialModelingPrepTools(Toolkit):
             
             data = self._make_request(endpoint, params)
             
-            if not data or len(data) == 0:
+            if not data or not isinstance(data, list) or len(data) == 0:
                 return {
                     "symbol": symbol,
                     "error": f"No income statement data found for {symbol}",
@@ -192,16 +204,16 @@ class FinancialModelingPrepTools(Toolkit):
             # Get company profile for basic info
             profile_data = self._make_request(f"profile/{symbol}")
             
-            if not metrics_data or len(metrics_data) == 0:
+            if not metrics_data or not isinstance(metrics_data, list) or len(metrics_data) == 0:
                 return {
                     "symbol": symbol,
                     "error": f"No financial data found for {symbol}",
                     "success": False
                 }
             
-            metrics = metrics_data[0] if metrics_data else {}
-            ratios = ratios_data[0] if ratios_data else {}
-            profile = profile_data[0] if profile_data else {}
+            metrics = metrics_data[0] if isinstance(metrics_data, list) and metrics_data else {}
+            ratios = ratios_data[0] if isinstance(ratios_data, list) and ratios_data else {}
+            profile = profile_data[0] if isinstance(profile_data, list) and profile_data else {}
             
             return {
                 "symbol": symbol,
@@ -254,7 +266,7 @@ class FinancialModelingPrepTools(Toolkit):
             # Get historical price for comparison (1 day ago)
             historical_data = self._make_request(f"historical-price-full/{symbol}", {"timeseries": 2})
             
-            if not quote_data or len(quote_data) == 0:
+            if not quote_data or not isinstance(quote_data, list) or len(quote_data) == 0:
                 return {
                     "symbol": symbol,
                     "error": f"No price data found for {symbol}",
@@ -310,7 +322,7 @@ class FinancialModelingPrepTools(Toolkit):
             symbol = symbol.upper()
             profile_data = self._make_request(f"profile/{symbol}")
             
-            if not profile_data or len(profile_data) == 0:
+            if not profile_data or not isinstance(profile_data, list) or len(profile_data) == 0:
                 return {
                     "symbol": symbol,
                     "error": f"No profile data found for {symbol}",
