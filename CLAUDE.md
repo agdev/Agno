@@ -1,5 +1,6 @@
 # Financial Assistant - Agno Framework Migration
 
+
 ## Project Overview
 
 This project is a comprehensive financial assistant application that is being migrated from LangGraph/LangChain to the Agno framework. The application provides intelligent financial data retrieval, analysis, and reporting capabilities through a natural language interface.
