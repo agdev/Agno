@@ -5,13 +5,17 @@ This module implements the main FinancialAssistantWorkflow class that orchestrat
 the entire financial assistant application using Agno's Level 5 Agentic Workflow pattern.
 """
 
-from typing import Iterator, Any
+from typing import Iterator, Any, Optional
 from agno.agent import Agent, RunResponse
 from agno.workflow import Workflow
 from agno.models.anthropic import Claude
+from agno.models.openai import OpenAIChat
+from agno.models.groq import Groq
+from agno.storage.sqlite import SqliteStorage
 
-# Import tools and models
+# Import tools, models, and configuration
 from tools.financial_modeling_prep import FinancialModelingPrepTools
+from config.settings import Settings
 
 
 class FinancialAssistantWorkflow(Workflow):
@@ -23,78 +27,127 @@ class FinancialAssistantWorkflow(Workflow):
     - Chat Flow (conversational interaction)
     """
     
-    def __init__(self, llm=None):
+    def __init__(self, llm=None, settings: Optional[Settings] = None, storage: Optional[SqliteStorage] = None):
         """
         Initialize the Financial Assistant Workflow
         
         Args:
             llm: The language model to use for all agents. 
                  Defaults to Claude Sonnet 4 if not provided.
+            settings: Configuration settings. If not provided, will create new Settings instance.
+            storage: Storage instance for session persistence. If not provided, will create based on settings.
         """
         super().__init__()
-        self.llm = llm or Claude(id="claude-sonnet-4-20250514")
+        
+        # Initialize settings
+        self.settings = settings or Settings()
+        
+        # Initialize storage for session management
+        if storage:
+            self.storage = storage
+        else:
+            self.storage = SqliteStorage(
+                table_name=self.settings.storage_table_name,
+                db_file=self.settings.storage_db_file
+            )
+        
+        # Use provided LLM or create default based on settings
+        if llm:
+            self.llm = llm
+        else:
+            # Use settings to determine default model
+            model_id = self.settings.get_llm_model_id(self.settings.default_llm_provider)
+            if model_id:
+                self.llm = Claude(id=model_id)
+            else:
+                self.llm = Claude(id="claude-sonnet-4-20250514")  # Fallback
+        
         self._initialize_agents()
     
     def _initialize_agents(self):
         """Initialize all workflow agents with the provided LLM"""
         
-        # Get FMP API key from environment or session state
-        fmp_api_key = None
-        try:
-            import streamlit as st
-            fmp_api_key = st.session_state.get("fmp_api_key")
-        except ImportError:
-            pass  # Streamlit not available, that's OK
+        # Get FMP API key from settings or session state
+        fmp_api_key = self.settings.financial_modeling_prep_api_key
+        if not fmp_api_key:
+            try:
+                import streamlit as st
+                fmp_api_key = st.session_state.get("fmp_api_key")
+            except ImportError:
+                pass  # Streamlit not available, that's OK
         
-        # Initialize Financial Modeling Prep Tools
-        self.fmp_tools = FinancialModelingPrepTools(api_key=fmp_api_key)
+        # Initialize Financial Modeling Prep Tools with settings
+        self.fmp_tools = FinancialModelingPrepTools(
+            api_key=fmp_api_key, 
+            settings=self.settings
+        )
         
-        # Router Agent - Categorizes user requests
+        # Router Agent - Categorizes user requests with conversation context
         self.router_agent = Agent(
             name="Router Agent",
-            role="Categorize user requests for appropriate workflow path",
+            role="Categorize user requests for appropriate workflow path using conversation context",
             model=self.llm,
+            storage=self.storage,
+            enable_session_summaries=self.settings.enable_session_summaries,
+            add_history_to_messages=self.settings.add_history_to_messages,
+            num_history_responses=self.settings.num_history_responses,
             instructions=[
                 "Categorize user requests into: income_statement, company_financials, stock_price, report, or chat",
-                "Use conversation context from session for better categorization",
+                "IMPORTANT: Use conversation context and summary to better categorize requests",
+                "Consider previous topics and companies mentioned in the conversation",
+                "Follow-up questions like 'What about Tesla?' should use context to determine the data type needed",
+                "If conversation context mentions specific companies, consider that for ambiguous requests",
                 "Return only the category name",
                 "Examples:",
                 "- 'What is Apple's stock price?' -> stock_price",
                 "- 'Show Tesla's income statement' -> income_statement", 
                 "- 'Tell me about Apple' -> report",
+                "- 'What about Tesla?' (with previous financial context) -> same category as previous request",
                 "- 'What is a P/E ratio?' -> chat"
             ]
         )
         
-        # Symbol Extraction Agent - Extracts stock symbols from natural language
+        # Symbol Extraction Agent - Extracts stock symbols with conversation context
         self.symbol_extraction_agent = Agent(
             name="Symbol Extraction Agent", 
-            role="Extract stock symbols from natural language queries",
+            role="Extract stock symbols from natural language queries using conversation context",
             model=self.llm,
             tools=[self.fmp_tools],
+            storage=self.storage,
+            enable_session_summaries=self.settings.enable_session_summaries,
+            add_history_to_messages=self.settings.add_history_to_messages,
+            num_history_responses=self.settings.num_history_responses,
             instructions=[
-                "Extract stock ticker symbols from user queries",
+                "Extract stock ticker symbols from user queries using conversation context",
+                "IMPORTANT: Use conversation history to resolve ambiguous symbol references",
+                "Handle pronouns and references like 'it', 'that company', 'the stock' by checking conversation context",
+                "If previous messages mention specific companies, prioritize those for ambiguous references",
                 "Handle company names and convert to proper symbols using the search_symbol tool",
                 "Examples: 'Apple' -> 'AAPL', 'Tesla' -> 'TSLA', 'Microsoft' -> 'MSFT'",
+                "Context examples: 'it' after discussing Apple -> 'AAPL', 'that company' -> refer to last mentioned company",
                 "Use the search_symbol tool to validate and find correct symbols",
-                "Return 'UNKNOWN' if no valid symbol can be extracted",
+                "Return 'UNKNOWN' if no valid symbol can be extracted even with context",
                 "Always return symbols in uppercase"
             ]
         )
         
-        # Data Retrieval Agents
+        # Data Retrieval Agents with conversation history
         self.income_statement_agent = Agent(
             name="Income Statement Agent",
             role="Retrieve and format income statement data",
             model=self.llm,
             tools=[self.fmp_tools],
+            storage=self.storage,
+            add_history_to_messages=self.settings.add_history_to_messages,
+            num_history_responses=self.settings.num_history_responses,
             instructions=[
                 "Use the get_income_statement tool to fetch income statement for given symbol", 
                 "Format as structured markdown with clear sections",
                 "Include revenue, expenses, profit margins, and key metrics",
                 "Present data in a professional, easy-to-read format",
                 "Show revenue, gross profit, operating income, net income, and key ratios",
-                "Include period information and growth trends if available"
+                "Include period information and growth trends if available",
+                "Use conversation history to provide relevant context and comparisons"
             ]
         )
         
@@ -103,13 +156,17 @@ class FinancialAssistantWorkflow(Workflow):
             role="Retrieve and format company financial metrics",
             model=self.llm,
             tools=[self.fmp_tools],
+            storage=self.storage,
+            add_history_to_messages=self.settings.add_history_to_messages,
+            num_history_responses=self.settings.num_history_responses,
             instructions=[
                 "Use the get_company_financials tool to fetch company financials for given symbol", 
                 "Format key metrics clearly in structured markdown",
                 "Include financial ratios, valuation metrics, and profitability indicators",
                 "Highlight important financial health indicators",
                 "Show P/E ratio, debt-to-equity, ROE, ROA, margins, and growth metrics",
-                "Provide context and interpretation of the financial metrics"
+                "Provide context and interpretation of the financial metrics",
+                "Use conversation history to provide relevant comparisons and context"
             ]
         )
         
@@ -118,13 +175,17 @@ class FinancialAssistantWorkflow(Workflow):
             role="Retrieve and format current stock price data", 
             model=self.llm,
             tools=[self.fmp_tools],
+            storage=self.storage,
+            add_history_to_messages=self.settings.add_history_to_messages,
+            num_history_responses=self.settings.num_history_responses,
             instructions=[
                 "Use the get_stock_price tool to fetch current stock price data", 
                 "Include price movement and basic analytics",
                 "Show current price, change, percentage change, volume",
                 "Add context about recent performance and trading activity",
                 "Include 52-week high/low, market cap, and trading volume analysis",
-                "Format as clear, easy-to-read markdown with key metrics highlighted"
+                "Format as clear, easy-to-read markdown with key metrics highlighted",
+                "Use conversation history to provide relevant context and comparisons"
             ]
         )
         
@@ -133,13 +194,18 @@ class FinancialAssistantWorkflow(Workflow):
             name="Report Generation Agent",
             role="Create comprehensive financial reports from aggregated data",
             model=self.llm,
+            storage=self.storage,
+            add_history_to_messages=self.settings.add_history_to_messages,
+            num_history_responses=self.settings.num_history_responses,
             instructions=[
                 "Combine income statement, company financials, and stock price data",
                 "Generate structured markdown report with clear sections",
-                "Include analysis and key insights",
-                "Ensure professional formatting",
-                "Create executive summary at the top",
-                "Highlight strengths, weaknesses, and opportunities"
+                "Include analysis and key insights based on conversation context",
+                "Ensure professional formatting and consistent style",
+                "Create executive summary at the top with key findings",
+                "Highlight strengths, weaknesses, and opportunities",
+                "Reference previous analyses and comparisons from conversation history",
+                "Provide relevant context from past discussions about the company"
             ],
             markdown=True
         )
@@ -149,15 +215,76 @@ class FinancialAssistantWorkflow(Workflow):
             name="Chat Agent",
             role="Handle conversational interactions and general queries",
             model=self.llm,
+            storage=self.storage,
+            add_history_to_messages=self.settings.add_history_to_messages,
+            num_history_responses=self.settings.num_history_responses,
             instructions=[
-                "Provide conversational responses about finance",
-                "Offer educational content when appropriate",
-                "Keep responses informative but concise",
-                "Use friendly, professional tone",
-                "Explain financial concepts clearly",
-                "Ask clarifying questions when needed"
+                "Provide conversational responses about finance using conversation context",
+                "Offer educational content when appropriate based on user's knowledge level",
+                "Keep responses informative but concise and contextually relevant",
+                "Use friendly, professional tone consistent with conversation history",
+                "Explain financial concepts clearly, building on previous explanations",
+                "Ask clarifying questions when needed, considering past interactions",
+                "Reference previous topics and companies discussed in the conversation",
+                "Adapt explanations based on user's demonstrated understanding level"
             ]
         )
+    
+    def get_session_summary(self, session_id: Optional[str] = None) -> Optional[str]:
+        """
+        Retrieve the current session summary for context
+        
+        Args:
+            session_id: Optional session ID. If not provided, uses current session.
+            
+        Returns:
+            Session summary string or None if not available
+        """
+        try:
+            # If using session summaries, the Agent itself will have access to summaries
+            # through the enable_session_summaries feature. For now, let's return None
+            # and rely on Agno's built-in session summary functionality within agents.
+            
+            # TODO: Research the correct API for accessing session summaries from Agno storage
+            # The session summaries are likely handled internally by the Agent when
+            # enable_session_summaries=True is set
+            
+            pass
+                    
+        except Exception as e:
+            # Log error but don't fail - graceful degradation
+            print(f"Warning: Could not retrieve session summary: {e}")
+            
+        return None
+    
+    def get_conversation_context(self, session_id: Optional[str] = None) -> str:
+        """
+        Get formatted conversation context for agents
+        
+        Args:
+            session_id: Optional session ID for context retrieval
+            
+        Returns:
+            Formatted context string for agent consumption
+        """
+        # Try to get session summary from Agno's built-in functionality first
+        summary = self.get_session_summary(session_id)
+        
+        if summary:
+            return f"Conversation summary: {summary}"
+        
+        # Fallback to session state if available
+        try:
+            import streamlit as st
+            fallback_summary = st.session_state.get('conversation_summary', '')
+            if fallback_summary:
+                return f"Conversation summary: {fallback_summary}"
+        except ImportError:
+            pass
+        
+        # If no summary available, rely on Agno's built-in history via add_history_to_messages
+        # The agents are configured with add_history_to_messages=True so they'll have context
+        return "Previous conversation history available through agent memory."
     
     def run(self, **kwargs: Any) -> Iterator[RunResponse]:  # type: ignore[override]
         """
@@ -179,10 +306,10 @@ class FinancialAssistantWorkflow(Workflow):
             yield RunResponse(run_id=self.run_id, content="No message provided")
             return
         
-        # Step 1: Route the request
-        conversation_summary = self.session_state.get('conversation_summary', '')
+        # Step 1: Route the request with conversation context
+        conversation_context = self.get_conversation_context()
         category_response = self.router_agent.run(
-            f"User request: {message}\nConversation summary: {conversation_summary}"
+            f"User request: {message}\n{conversation_context}"
         )
         
         # Handle potential None content
@@ -213,8 +340,11 @@ class FinancialAssistantWorkflow(Workflow):
             RunResponse: Final comprehensive report
         """
         
-        # Extract symbol
-        symbol_response = self.symbol_extraction_agent.run(message)
+        # Extract symbol with conversation context
+        conversation_context = self.get_conversation_context()
+        symbol_response = self.symbol_extraction_agent.run(
+            f"Extract symbol from: {message}\n{conversation_context}"
+        )
         symbol_content = symbol_response.content if symbol_response.content else "UNKNOWN"
         symbol = symbol_content.strip()
         
@@ -268,8 +398,11 @@ class FinancialAssistantWorkflow(Workflow):
             RunResponse: Specific financial data response
         """
         
-        # Extract symbol
-        symbol_response = self.symbol_extraction_agent.run(message)
+        # Extract symbol with conversation context
+        conversation_context = self.get_conversation_context()
+        symbol_response = self.symbol_extraction_agent.run(
+            f"Extract symbol from: {message}\n{conversation_context}"
+        )
         symbol_content = symbol_response.content if symbol_response.content else "UNKNOWN"
         symbol = symbol_content.strip()
         
@@ -321,14 +454,18 @@ class FinancialAssistantWorkflow(Workflow):
 
 
 # Convenience function for easy workflow instantiation
-def create_financial_assistant_workflow(llm=None) -> FinancialAssistantWorkflow:
+def create_financial_assistant_workflow(
+    llm=None, 
+    settings: Optional[Settings] = None
+) -> FinancialAssistantWorkflow:
     """
     Create and return a configured FinancialAssistantWorkflow instance.
     
     Args:
         llm: Optional language model to use. Defaults to Claude Sonnet 4.
+        settings: Optional settings instance. If not provided, creates new Settings.
         
     Returns:
         FinancialAssistantWorkflow: Configured workflow instance
     """
-    return FinancialAssistantWorkflow(llm=llm)
+    return FinancialAssistantWorkflow(llm=llm, settings=settings)

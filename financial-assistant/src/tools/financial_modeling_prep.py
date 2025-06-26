@@ -6,12 +6,12 @@ integration with the Financial Modeling Prep API for fetching financial data.
 """
 
 import json
-import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Union
 
 import requests
 from agno.tools.toolkit import Toolkit
+from config.settings import Settings
 
 
 class FinancialModelingPrepTools(Toolkit):
@@ -22,11 +22,16 @@ class FinancialModelingPrepTools(Toolkit):
     including income statements, company financials, stock prices, and symbol search.
     """
 
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, api_key: Optional[str] = None, settings: Optional[Settings] = None):
         super().__init__(name="financial_modeling_prep")
 
-        # Get API key from parameter, environment, or session state
-        self.api_key = api_key or os.getenv("FINANCIAL_MODELING_PREP_API_KEY")
+        # Initialize settings if not provided
+        if settings is None:
+            settings = Settings()
+        self.settings = settings
+
+        # Get API key from parameter, settings, or session state
+        self.api_key = api_key or settings.financial_modeling_prep_api_key
 
         # If still no API key, try to get from session state (requires streamlit)
         if not self.api_key:
@@ -38,6 +43,7 @@ class FinancialModelingPrepTools(Toolkit):
                 pass  # Streamlit not available, that's OK
 
         self.base_url = "https://financialmodelingprep.com/api/v3"
+        self.timeout = settings.request_timeout_seconds
 
         if not self.api_key:
             raise ValueError(
@@ -69,7 +75,7 @@ class FinancialModelingPrepTools(Toolkit):
         url = f"{self.base_url}/{endpoint}"
 
         try:
-            response = requests.get(url, params=params, timeout=30)
+            response = requests.get(url, params=params, timeout=self.timeout)
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
@@ -292,9 +298,9 @@ class FinancialModelingPrepTools(Toolkit):
             quote_data = self._make_request(f"quote/{symbol}")
 
             # Get historical price for trend analysis (last 5 days)
-            historical_data = self._make_request(
-                f"historical-price-full/{symbol}", {"timeseries": 5}
-            )
+            # historical_data = self._make_request(
+            #     f"historical-price-full/{symbol}", {"timeseries": 5}
+            # )
 
             if (
                 not quote_data
@@ -314,8 +320,8 @@ class FinancialModelingPrepTools(Toolkit):
             current_price = quote.get("price", 0)
 
             # Enhanced analytics using historical data
-            trend_analysis = self._analyze_price_trend(historical_data, current_price)
-            volatility_metrics = self._calculate_volatility(historical_data)
+            # trend_analysis = self._analyze_price_trend(historical_data, current_price)
+            # volatility_metrics = self._calculate_volatility(historical_data)
 
             return {
                 "symbol": symbol,
@@ -337,13 +343,13 @@ class FinancialModelingPrepTools(Toolkit):
                 "exchange": quote.get("exchange", "Unknown"),
                 "timestamp": quote.get("timestamp", int(datetime.now().timestamp())),
                 # Enhanced analytics from historical data
-                "trend_direction": trend_analysis.get("direction", "neutral"),
-                "trend_strength": trend_analysis.get("strength", 0),
-                "five_day_change_percent": trend_analysis.get(
-                    "five_day_change_percent", 0
-                ),
-                "price_volatility": volatility_metrics.get("volatility", 0),
-                "volume_trend": volatility_metrics.get("volume_trend", "stable"),
+                # "trend_direction": trend_analysis.get("direction", "neutral"),
+                # "trend_strength": trend_analysis.get("strength", 0),
+                # "five_day_change_percent": trend_analysis.get(
+                #     "five_day_change_percent", 0
+                # ),
+                # "price_volatility": volatility_metrics.get("volatility", 0),
+                # "volume_trend": volatility_metrics.get("volume_trend", "stable"),
                 "success": True,
                 "raw_data": quote,
             }
@@ -403,169 +409,168 @@ class FinancialModelingPrepTools(Toolkit):
                 "success": False,
             }
 
-    def _analyze_price_trend(
-        self,
-        historical_data: Union[List[Dict[str, Any]], Dict[str, Any]],
-        current_price: float,
-    ) -> Dict[str, Any]:
-        """
-        Analyze price trend from historical data
+    # def _analyze_price_trend(
+    #     self,
+    #     historical_data: Union[List[Dict[str, Any]], Dict[str, Any]],
+    #     current_price: float,
+    # ) -> Dict[str, Any]:
+    #     """
+    #     Analyze price trend from historical data
 
-        Args:
-            historical_data: Historical price data from API
-            current_price: Current stock price
+    #     Args:
+    #         historical_data: Historical price data from API
+    #         current_price: Current stock price
 
-        Returns:
-            Dict containing trend analysis
-        """
-        try:
-            # Handle case where historical data is not available or not in expected format
-            if not historical_data or not isinstance(historical_data, dict):
-                return {
-                    "direction": "neutral",
-                    "strength": 0,
-                    "five_day_change_percent": 0,
-                }
+    #     Returns:
+    #         Dict containing trend analysis
+    #     """
+    #     try:
+    #         # Handle case where historical data is not available or not in expected format
+    #         if not historical_data or not isinstance(historical_data, dict):
+    #             return {
+    #                 "direction": "neutral",
+    #                 "strength": 0,
+    #                 "five_day_change_percent": 0,
+    #             }
 
-            # Extract historical prices from the nested structure
-            historical_prices = historical_data.get("historical", [])
-            if not historical_prices or len(historical_prices) < 2:
-                return {
-                    "direction": "neutral",
-                    "strength": 0,
-                    "five_day_change_percent": 0,
-                }
+    #         # Extract historical prices from the nested structure
+    #         historical_prices = historical_data.get("historical", [])
+    #         if not historical_prices or len(historical_prices) < 2:
+    #             return {
+    #                 "direction": "neutral",
+    #                 "strength": 0,
+    #                 "five_day_change_percent": 0,
+    #             }
 
-            # Get prices (most recent first in FMP API)
-            prices = [
-                float(day.get("close", 0))
-                for day in historical_prices[:5]
-                if day.get("close")
-            ]
-            if len(prices) < 2:
-                return {
-                    "direction": "neutral",
-                    "strength": 0,
-                    "five_day_change_percent": 0,
-                }
+    #         # Get prices (most recent first in FMP API)
+    #         prices = [
+    #             float(day.get("close", 0))
+    #             for day in historical_prices[:5]
+    #             if day.get("close")
+    #         ]
+    #         if len(prices) < 2:
+    #             return {
+    #                 "direction": "neutral",
+    #                 "strength": 0,
+    #                 "five_day_change_percent": 0,
+    #             }
 
-            # Calculate 5-day change
-            oldest_price = prices[-1]  # 5 days ago
-            five_day_change_percent = (
-                ((current_price - oldest_price) / oldest_price * 100)
-                if oldest_price > 0
-                else 0
-            )
+    #         # Calculate 5-day change
+    #         oldest_price = prices[-1]  # 5 days ago
+    #         five_day_change_percent = (
+    #             ((current_price - oldest_price) / oldest_price * 100)
+    #             if oldest_price > 0
+    #             else 0
+    #         )
 
-            # Determine trend direction and strength
-            if len(prices) >= 3:
-                # Count upward vs downward movements
-                up_days = sum(
-                    1 for i in range(len(prices) - 1) if prices[i] > prices[i + 1]
-                )
-                total_days = len(prices) - 1
+    #         # Determine trend direction and strength
+    #         if len(prices) >= 3:
+    #             # Count upward vs downward movements
+    #             up_days = sum(
+    #                 1 for i in range(len(prices) - 1) if prices[i] > prices[i + 1]
+    #             )
+    #             total_days = len(prices) - 1
 
-                if up_days / total_days >= 0.6:
-                    direction = "bullish"
-                    strength = min(up_days / total_days, 1.0)
-                elif up_days / total_days <= 0.4:
-                    direction = "bearish"
-                    strength = min((total_days - up_days) / total_days, 1.0)
-                else:
-                    direction = "neutral"
-                    strength = 0.5
-            else:
-                # Simple comparison for limited data
-                if five_day_change_percent > 2:
-                    direction = "bullish"
-                    strength = min(abs(five_day_change_percent) / 10, 1.0)
-                elif five_day_change_percent < -2:
-                    direction = "bearish"
-                    strength = min(abs(five_day_change_percent) / 10, 1.0)
-                else:
-                    direction = "neutral"
-                    strength = 0.5
+    #             if up_days / total_days >= 0.6:
+    #                 direction = "bullish"
+    #                 strength = min(up_days / total_days, 1.0)
+    #             elif up_days / total_days <= 0.4:
+    #                 direction = "bearish"
+    #                 strength = min((total_days - up_days) / total_days, 1.0)
+    #             else:
+    #                 direction = "neutral"
+    #                 strength = 0.5
+    #         else:
+    #             # Simple comparison for limited data
+    #             if five_day_change_percent > 2:
+    #                 direction = "bullish"
+    #                 strength = min(abs(five_day_change_percent) / 10, 1.0)
+    #             elif five_day_change_percent < -2:
+    #                 direction = "bearish"
+    #                 strength = min(abs(five_day_change_percent) / 10, 1.0)
+    #             else:
+    #                 direction = "neutral"
+    #                 strength = 0.5
 
-            return {
-                "direction": direction,
-                "strength": round(strength, 2),
-                "five_day_change_percent": round(five_day_change_percent, 2),
-            }
+    #         return {
+    #             "direction": direction,
+    #             "strength": round(strength, 2),
+    #             "five_day_change_percent": round(five_day_change_percent, 2),
+    #         }
 
-        except Exception:
-            return {"direction": "neutral", "strength": 0, "five_day_change_percent": 0}
+    #     except Exception:
+    #         return {"direction": "neutral", "strength": 0, "five_day_change_percent": 0}
 
-    def _calculate_volatility(
-        self, historical_data: Union[List[Dict[str, Any]], Dict[str, Any]]
-    ) -> Dict[str, Any]:
-        """
-        Calculate volatility metrics from historical data
+    # def _calculate_volatility(
+    #     self, historical_data: Union[List[Dict[str, Any]], Dict[str, Any]]
+    # ) -> Dict[str, Any]:
+    #     """
+    #     Calculate volatility metrics from historical data
 
-        Args:
-            historical_data: Historical price data from API
+    #     Args:
+    #         historical_data: Historical price data from API
 
-        Returns:
-            Dict containing volatility metrics
-        """
-        try:
-            # Handle case where historical data is not available
-            if not historical_data or not isinstance(historical_data, dict):
-                return {"volatility": 0, "volume_trend": "stable"}
+    #     Returns:
+    #         Dict containing volatility metrics
+    #     """
+    #     try:
+    #         # Handle case where historical data is not available
+    #         if not historical_data or not isinstance(historical_data, dict):
+    #             return {"volatility": 0, "volume_trend": "stable"}
+    #         historical_prices = historical_data.get("historical", [])
+    #         if not historical_prices or len(historical_prices) < 3:
+    #             return {"volatility": 0, "volume_trend": "stable"}
 
-            historical_prices = historical_data.get("historical", [])
-            if not historical_prices or len(historical_prices) < 3:
-                return {"volatility": 0, "volume_trend": "stable"}
+    #         # Calculate price volatility (standard deviation of daily returns)
+    #         prices = [
+    #             float(day.get("close", 0))
+    #             for day in historical_prices[:5]
+    #             if day.get("close")
+    #         ]
+    #         volumes = [
+    #             int(day.get("volume", 0))
+    #             for day in historical_prices[:5]
+    #             if day.get("volume")
+    #         ]
 
-            # Calculate price volatility (standard deviation of daily returns)
-            prices = [
-                float(day.get("close", 0))
-                for day in historical_prices[:5]
-                if day.get("close")
-            ]
-            volumes = [
-                int(day.get("volume", 0))
-                for day in historical_prices[:5]
-                if day.get("volume")
-            ]
+    #         if len(prices) >= 3:
+    #             # Calculate daily returns
+    #             returns = []
+    #             for i in range(len(prices) - 1):
+    #                 if prices[i + 1] > 0:
+    #                     daily_return = (prices[i] - prices[i + 1]) / prices[i + 1]
+    #                     returns.append(daily_return)
 
-            if len(prices) >= 3:
-                # Calculate daily returns
-                returns = []
-                for i in range(len(prices) - 1):
-                    if prices[i + 1] > 0:
-                        daily_return = (prices[i] - prices[i + 1]) / prices[i + 1]
-                        returns.append(daily_return)
+    #             # Calculate volatility (standard deviation)
+    #             if returns:
+    #                 mean_return = sum(returns) / len(returns)
+    #                 variance = sum((r - mean_return) ** 2 for r in returns) / len(
+    #                     returns
+    #                 )
+    #                 volatility = (variance**0.5) * 100  # Convert to percentage
+    #             else:
+    #                 volatility = 0
+    #         else:
+    #             volatility = 0
 
-                # Calculate volatility (standard deviation)
-                if returns:
-                    mean_return = sum(returns) / len(returns)
-                    variance = sum((r - mean_return) ** 2 for r in returns) / len(
-                        returns
-                    )
-                    volatility = (variance**0.5) * 100  # Convert to percentage
-                else:
-                    volatility = 0
-            else:
-                volatility = 0
+    #         # Analyze volume trend
+    #         volume_trend = "stable"
+    #         if len(volumes) >= 3:
+    #             recent_avg = sum(volumes[:2]) / 2 if len(volumes) >= 2 else volumes[0]
+    #             older_avg = (
+    #                 sum(volumes[2:]) / len(volumes[2:])
+    #                 if len(volumes) > 2
+    #                 else recent_avg
+    #             )
 
-            # Analyze volume trend
-            volume_trend = "stable"
-            if len(volumes) >= 3:
-                recent_avg = sum(volumes[:2]) / 2 if len(volumes) >= 2 else volumes[0]
-                older_avg = (
-                    sum(volumes[2:]) / len(volumes[2:])
-                    if len(volumes) > 2
-                    else recent_avg
-                )
+    #             if recent_avg > older_avg * 1.2:
+    #                 volume_trend = "increasing"
+    #             elif recent_avg < older_avg * 0.8:
+    #                 volume_trend = "decreasing"
+    #             else:
+    #                 volume_trend = "stable"
 
-                if recent_avg > older_avg * 1.2:
-                    volume_trend = "increasing"
-                elif recent_avg < older_avg * 0.8:
-                    volume_trend = "decreasing"
-                else:
-                    volume_trend = "stable"
+    #         return {"volatility": round(volatility, 2), "volume_trend": volume_trend}
 
-            return {"volatility": round(volatility, 2), "volume_trend": volume_trend}
-
-        except Exception:
-            return {"volatility": 0, "volume_trend": "stable"}
+    #     except Exception:
+    #         return {"volatility": 0, "volume_trend": "stable"}

@@ -2211,7 +2211,74 @@ uv export --format requirements-txt --output-file requirements.txt
 
 ## Configuration Management
 
-### 1. Environment-Aware Settings
+### 1. Avoid Global Variables
+
+**NEVER use global variables - they create hidden dependencies and make testing difficult:**
+
+```python
+# ❌ Bad - Global variables create hidden state
+DATABASE_CONNECTION = None
+CURRENT_USER = None
+CACHE = {}
+
+def get_user_data(user_id):
+    global CURRENT_USER, DATABASE_CONNECTION
+    # Hidden dependencies make this untestable
+    return DATABASE_CONNECTION.query(user_id)
+
+def set_current_user(user):
+    global CURRENT_USER
+    CURRENT_USER = user  # Mutable global state
+
+# ❌ Bad - Global configuration
+API_KEY = "secret-key"
+DEBUG_MODE = True
+
+# ✅ Good - Dependency injection with configuration objects
+from functools import lru_cache
+from pydantic_settings import BaseSettings
+
+class Settings(BaseSettings):
+    api_key: str
+    debug_mode: bool = False
+    
+    class Config:
+        env_file = ".env"
+
+@lru_cache()
+def get_settings() -> Settings:
+    return Settings()
+
+class UserService:
+    def __init__(self, db_connection, settings: Settings):
+        self.db = db_connection
+        self.settings = settings
+    
+    def get_user_data(self, user_id: int) -> User:
+        # Explicit dependencies, easily testable
+        return self.db.query(user_id)
+
+# ✅ Good - Configuration passed explicitly
+def create_user_service(db_connection) -> UserService:
+    settings = get_settings()
+    return UserService(db_connection, settings)
+```
+
+**Why global variables are problematic:**
+- **Hidden Dependencies**: Functions that use globals have invisible requirements
+- **Testing Difficulty**: Hard to mock or isolate for unit testing
+- **Thread Safety**: Global state creates race conditions in concurrent code
+- **Code Clarity**: Makes data flow and dependencies unclear
+- **Reusability**: Functions become coupled to specific global state
+
+**Alternatives to global variables:**
+- **Dependency Injection**: Pass dependencies as parameters
+- **Configuration Objects**: Use Pydantic Settings for configuration
+- **Context Managers**: For temporary state that needs cleanup
+- **Class Instances**: Encapsulate related state and behavior
+- **Function Parameters**: Make dependencies explicit
+
+### 2. Environment-Aware Settings
 
 **Implement comprehensive configuration management:**
 

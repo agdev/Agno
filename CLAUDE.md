@@ -219,6 +219,19 @@ Detailed progress is tracked in `docs/implementation-todo.md` with:
 - **Architecture Guidelines**: `docs/rules/architecture-guidelines.md`
 - **Original LangGraph Implementation**: `/home/yoda/Library/Projects/Portfolio/Langgraph/FinancialAssistant/`
 
+## Development Rules and Standards
+
+This project follows strict development standards documented in the `docs/rules/` directory:
+
+- **`docs/rules/python-best-practices.md`**: Comprehensive Python coding standards including:
+  - **NO GLOBAL VARIABLES**: Never use global variables - use dependency injection and configuration objects
+  - Type hints, error handling, async patterns, testing standards
+  - Security guidelines, performance optimization, documentation standards
+  - Modern Python 3.11+ features and best practices
+- **`docs/rules/architecture-guidelines.md`**: System architecture and design patterns
+
+**IMPORTANT**: All code must follow these rules. Pay special attention to avoiding global variables and using proper dependency injection patterns.
+
 ## Notes for Claude Code Assistant
 
 - This project prioritizes defensive security and proper API key management

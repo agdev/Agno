@@ -6,10 +6,35 @@ using Pydantic settings with environment variable support.
 """
 
 import os
+from pathlib import Path
 from typing import List, Literal, Optional, Tuple
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
+
+
+def find_env_file() -> Optional[str]:
+    """
+    Find .env file by searching from current file up to project root
+    
+    Returns:
+        Path to .env file if found, None otherwise
+    """
+    # Start from the current file's directory
+    current_dir = Path(__file__).parent
+    
+    # Search up the directory tree for .env file
+    for path in [current_dir] + list(current_dir.parents):
+        env_file = path / ".env"
+        if env_file.exists():
+            return str(env_file)
+    
+    # Also check current working directory as fallback
+    cwd_env = Path.cwd() / ".env"
+    if cwd_env.exists():
+        return str(cwd_env)
+    
+    return None
 
 
 class Settings(BaseSettings):
@@ -76,33 +101,70 @@ class Settings(BaseSettings):
         50, description="Maximum number of chat messages to keep in history"
     )
 
+    # Session Storage Configuration
+    storage_db_file: str = Field(
+        "tmp/financial_assistant_sessions.db", 
+        description="SQLite database file for session storage"
+    )
+    storage_table_name: str = Field(
+        "agent_sessions", 
+        description="Table name for agent session storage"
+    )
+
+    # Session Summary Configuration
+    enable_session_summaries: bool = Field(
+        True, description="Enable automatic session summary generation"
+    )
+    session_summary_model_provider: Literal["anthropic", "openai", "groq"] = Field(
+        "anthropic", description="LLM provider for session summary generation"
+    )
+    max_summary_length: int = Field(
+        500, description="Maximum length for session summaries in characters"
+    )
+
+    # Chat History Configuration  
+    add_history_to_messages: bool = Field(
+        True, description="Add chat history to messages sent to agents"
+    )
+    num_history_responses: int = Field(
+        3, description="Number of previous messages to include in agent context"
+    )
+    
+    # Session Management
+    auto_generate_session_id: bool = Field(
+        True, description="Automatically generate session IDs if not provided"
+    )
+    session_timeout_hours: int = Field(
+        24, description="Session timeout in hours for cleanup"
+    )
+
     class Config:
-        env_file = ".env"
+        env_file = find_env_file()  # Automatically find .env file
         env_file_encoding = "utf-8"
         case_sensitive = False
 
-        @field_validator("default_llm_provider")
-        @classmethod
-        def validate_llm_provider(cls, v, info):
-            """Ensure the default LLM provider has a corresponding API key"""
-            if info.data:
-                values = info.data
-                if v == "anthropic" and not values.get("anthropic_api_key"):
-                    if values.get("openai_api_key"):
-                        return "openai"
-                    elif values.get("groq_api_key"):
-                        return "groq"
-                elif v == "openai" and not values.get("openai_api_key"):
-                    if values.get("anthropic_api_key"):
-                        return "anthropic"
-                    elif values.get("groq_api_key"):
-                        return "groq"
-                elif v == "groq" and not values.get("groq_api_key"):
-                    if values.get("anthropic_api_key"):
-                        return "anthropic"
-                    elif values.get("openai_api_key"):
-                        return "openai"
-            return v
+    @field_validator("default_llm_provider")
+    @classmethod
+    def validate_llm_provider(cls, v, info):
+        """Ensure the default LLM provider has a corresponding API key"""
+        if info.data:
+            values = info.data
+            if v == "anthropic" and not values.get("anthropic_api_key"):
+                if values.get("openai_api_key"):
+                    return "openai"
+                elif values.get("groq_api_key"):
+                    return "groq"
+            elif v == "openai" and not values.get("openai_api_key"):
+                if values.get("anthropic_api_key"):
+                    return "anthropic"
+                elif values.get("groq_api_key"):
+                    return "groq"
+            elif v == "groq" and not values.get("groq_api_key"):
+                if values.get("anthropic_api_key"):
+                    return "anthropic"
+                elif values.get("openai_api_key"):
+                    return "openai"
+        return v
 
     @property
     def has_llm_provider(self) -> bool:
