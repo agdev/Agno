@@ -166,20 +166,51 @@ def setup_sidebar(settings: Settings):
         env_openai = bool(settings.openai_api_key)
         env_groq = bool(settings.groq_api_key)
         
-        # Show environment status
-        if any([env_fmp, env_anthropic, env_openai, env_groq]):
-            st.info("✅ Some API keys loaded from environment")
-            if env_fmp:
-                st.write("✓ Financial Modeling Prep")
-            if env_anthropic:
-                st.write("✓ Anthropic (Claude)")
-            if env_openai:
-                st.write("✓ OpenAI (GPT)")
-            if env_groq:
-                st.write("✓ Groq (Llama)")
+        # LLM Provider Selection (Show all supported providers) - Move this first
+        st.markdown("### LLM Provider")
+        all_providers = ["anthropic", "openai", "groq"]  # Always show all supported providers
+        available_providers = settings.get_available_llm_providers()  # Providers with API keys
+        
+        # Show default provider if it's supported, otherwise default to first
+        default_index = 0
+        if settings.default_llm_provider in all_providers:
+            default_index = all_providers.index(settings.default_llm_provider)
+        
+        selected_provider = st.selectbox(
+            "Choose LLM Provider",
+            all_providers,  # Show all providers, not just configured ones
+            index=default_index,
+            help="Select your preferred language model provider"
+        )
+        
+        # Show status for selected provider only
+        selected_provider_has_key = selected_provider in available_providers
+        if selected_provider_has_key:
+            st.success(f"✅ **{selected_provider.title()}**: Configured and ready!")
         else:
-            st.warning("No environment variables found - manual input required")
-
+            st.warning(f"🔑 **{selected_provider.title()}**: API key required (enter below)")
+        
+        # Show environment status for relevant keys only
+        st.markdown("### Environment Status")
+        env_keys_found = []
+        if env_fmp:
+            env_keys_found.append("Financial Modeling Prep")
+        
+        # Only show selected provider's environment status
+        if selected_provider == "anthropic" and env_anthropic:
+            env_keys_found.append("Anthropic (Claude)")
+        elif selected_provider == "openai" and env_openai:
+            env_keys_found.append("OpenAI (GPT)")
+        elif selected_provider == "groq" and env_groq:
+            env_keys_found.append("Groq (Llama)")
+        
+        if env_keys_found:
+            st.info("✅ Keys loaded from environment:")
+            for key in env_keys_found:
+                st.write(f"✓ {key}")
+        else:
+            st.info("🔑 Manual API key entry required")
+        
         # Manual API Key Input Section
         st.markdown("### Manual API Keys")
         st.markdown("*Enter keys only if not set in environment*")
@@ -196,69 +227,44 @@ def setup_sidebar(settings: Settings):
             if fmp_key:
                 st.session_state["fmp_api_key"] = fmp_key
         
-        # LLM Provider Selection (Show available providers)
-        st.markdown("### LLM Provider")
-        available_providers = settings.get_available_llm_providers()
-        if not available_providers:
-            available_providers = ["anthropic", "openai", "groq"]  # Show all for manual input
+        # Provider-specific API key input (only for selected provider if needed)
+        provider_configured = selected_provider in available_providers
         
-        default_index = 0
-        if settings.default_llm_provider in available_providers:
-            default_index = available_providers.index(settings.default_llm_provider)
-        
-        selected_provider = st.selectbox(
-            "Choose LLM Provider",
-            available_providers,
-            index=default_index,
-            help="Select your preferred language model provider"
-        )
-        
-        # Provider-specific API key input (if not in environment)
-        provider_configured = False
-        
-        if selected_provider == "anthropic":
-            if not env_anthropic:
-                anthropic_key = st.text_input(
-                    "Anthropic API Key *",
-                    type="password",
-                    value=st.session_state.get("anthropic_api_key", ""),
-                    help="Get your Claude API key from console.anthropic.com",
-                    key="anthropic_key_input"
-                )
-                if anthropic_key:
-                    st.session_state["anthropic_api_key"] = anthropic_key
-                    provider_configured = True
-            else:
+        # Selected provider API key input (only if not in environment)
+        if selected_provider == "anthropic" and not env_anthropic:
+            anthropic_key = st.text_input(
+                "Anthropic API Key *",
+                type="password",
+                value=st.session_state.get("anthropic_api_key", ""),
+                help="Get your Claude API key from console.anthropic.com",
+                key="anthropic_key_input"
+            )
+            if anthropic_key:
+                st.session_state["anthropic_api_key"] = anthropic_key
                 provider_configured = True
                 
-        elif selected_provider == "openai":
-            if not env_openai:
-                openai_key = st.text_input(
-                    "OpenAI API Key *",
-                    type="password", 
-                    value=st.session_state.get("openai_api_key", ""),
-                    help="Get your OpenAI API key from platform.openai.com",
-                    key="openai_key_input"
-                )
-                if openai_key:
-                    st.session_state["openai_api_key"] = openai_key
-                    provider_configured = True
-            else:
+        elif selected_provider == "openai" and not env_openai:
+            openai_key = st.text_input(
+                "OpenAI API Key *",
+                type="password", 
+                value=st.session_state.get("openai_api_key", ""),
+                help="Get your OpenAI API key from platform.openai.com",
+                key="openai_key_input"
+            )
+            if openai_key:
+                st.session_state["openai_api_key"] = openai_key
                 provider_configured = True
                 
-        elif selected_provider == "groq":
-            if not env_groq:
-                groq_key = st.text_input(
-                    "Groq API Key *",
-                    type="password",
-                    value=st.session_state.get("groq_api_key", ""),
-                    help="Get your Groq API key from console.groq.com",
-                    key="groq_key_input"
-                )
-                if groq_key:
-                    st.session_state["groq_api_key"] = groq_key
-                    provider_configured = True
-            else:
+        elif selected_provider == "groq" and not env_groq:
+            groq_key = st.text_input(
+                "Groq API Key *",
+                type="password",
+                value=st.session_state.get("groq_api_key", ""),
+                help="Get your Groq API key from console.groq.com",
+                key="groq_key_input"
+            )
+            if groq_key:
+                st.session_state["groq_api_key"] = groq_key
                 provider_configured = True
 
         # Configuration Status

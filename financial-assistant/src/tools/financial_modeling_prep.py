@@ -12,6 +12,13 @@ from typing import Any, Dict, List, Optional, Union
 import requests
 from agno.tools.toolkit import Toolkit
 from config.settings import Settings
+from models.schemas import (
+    IncomeStatementData,
+    CompanyFinancialsData,
+    StockPriceData,
+    CompanyProfileData,
+    SymbolSearchResult
+)
 
 
 class FinancialModelingPrepTools(Toolkit):
@@ -83,7 +90,7 @@ class FinancialModelingPrepTools(Toolkit):
         except json.JSONDecodeError as e:
             raise Exception(f"Failed to parse API response: {str(e)}")
 
-    def search_symbol(self, query: str) -> Dict[str, Any]:
+    def search_symbol(self, query: str) -> SymbolSearchResult:
         """
         Search for stock symbols by company name or partial ticker
 
@@ -105,12 +112,13 @@ class FinancialModelingPrepTools(Toolkit):
                     and len(profile_data) > 0
                 ):
                     company = profile_data[0]
-                    return {
-                        "symbol": symbol,
-                        "name": company.get("companyName", "Unknown"),
-                        "exchange": company.get("exchangeShortName", "Unknown"),
-                        "found": True,
-                    }
+                    return SymbolSearchResult(
+                        symbol=symbol,
+                        company_name=company.get("companyName", "Unknown"),
+                        exchange=company.get("exchangeShortName", "Unknown"),
+                        found=True,
+                        error=None
+                    )
 
             # Search by company name
             search_data = self._make_request("search", {"query": query, "limit": 5})
@@ -118,32 +126,33 @@ class FinancialModelingPrepTools(Toolkit):
             if search_data and isinstance(search_data, list) and len(search_data) > 0:
                 # Return the first (most relevant) result
                 result = search_data[0]
-                return {
-                    "symbol": result.get("symbol", "UNKNOWN"),
-                    "name": result.get("name", "Unknown"),
-                    "exchange": result.get("exchangeShortName", "Unknown"),
-                    "found": True,
-                }
+                return SymbolSearchResult(
+                    symbol=result.get("symbol", "UNKNOWN"),
+                    company_name=result.get("name", "Unknown"),
+                    exchange=result.get("exchangeShortName", "Unknown"),
+                    found=True,
+                    error=None
+                )
             else:
-                return {
-                    "symbol": "UNKNOWN",
-                    "name": "Not Found",
-                    "exchange": "N/A",
-                    "found": False,
-                    "error": f"No symbols found for query: {query}",
-                }
+                return SymbolSearchResult(
+                    symbol="UNKNOWN",
+                    company_name="Not Found",
+                    exchange="N/A",
+                    found=False,
+                    error=f"No symbols found for query: {query}"
+                )
         except Exception as e:
-            return {
-                "symbol": "UNKNOWN",
-                "name": "Error",
-                "exchange": "N/A",
-                "found": False,
-                "error": str(e),
-            }
+            return SymbolSearchResult(
+                symbol="UNKNOWN",
+                company_name="Error",
+                exchange="N/A",
+                found=False,
+                error=str(e)
+            )
 
     def get_income_statement(
         self, symbol: str, period: str = "annual", limit: int = 1
-    ) -> Dict[str, Any]:
+    ) -> IncomeStatementData:
         """
         Get income statement data for a company
 
@@ -163,46 +172,70 @@ class FinancialModelingPrepTools(Toolkit):
             data = self._make_request(endpoint, params)
 
             if not data or not isinstance(data, list) or len(data) == 0:
-                return {
-                    "symbol": symbol,
-                    "error": f"No income statement data found for {symbol}",
-                    "success": False,
-                }
+                return IncomeStatementData(
+                    symbol=symbol,
+                    date="Unknown",
+                    period=period,
+                    revenue=0,
+                    gross_profit=0,
+                    operating_income=0,
+                    net_income=0,
+                    eps=0,
+                    gross_profit_ratio=0,
+                    operating_income_ratio=0,
+                    net_income_ratio=0,
+                    research_and_development=0,
+                    total_operating_expenses=0,
+                    error=f"No income statement data found for {symbol}",
+                    success=False
+                )
 
             # Process the most recent income statement
             income_statement = data[0]
 
-            return {
-                "symbol": symbol,
-                "date": income_statement.get("date", "Unknown"),
-                "period": income_statement.get("period", period),
-                "revenue": income_statement.get("revenue", 0),
-                "gross_profit": income_statement.get("grossProfit", 0),
-                "operating_income": income_statement.get("operatingIncome", 0),
-                "net_income": income_statement.get("netIncome", 0),
-                "eps": income_statement.get("eps", 0),
-                "gross_profit_ratio": income_statement.get("grossProfitRatio", 0),
-                "operating_income_ratio": income_statement.get(
+            return IncomeStatementData(
+                symbol=symbol,
+                date=income_statement.get("date", "Unknown"),
+                period=income_statement.get("period", period),
+                revenue=income_statement.get("revenue", 0),
+                gross_profit=income_statement.get("grossProfit", 0),
+                operating_income=income_statement.get("operatingIncome", 0),
+                net_income=income_statement.get("netIncome", 0),
+                eps=income_statement.get("eps", 0),
+                gross_profit_ratio=income_statement.get("grossProfitRatio", 0),
+                operating_income_ratio=income_statement.get(
                     "operatingIncomeRatio", 0
                 ),
-                "net_income_ratio": income_statement.get("netIncomeRatio", 0),
-                "research_and_development": income_statement.get(
+                net_income_ratio=income_statement.get("netIncomeRatio", 0),
+                research_and_development=income_statement.get(
                     "researchAndDevelopmentExpenses", 0
                 ),
-                "total_operating_expenses": income_statement.get(
+                total_operating_expenses=income_statement.get(
                     "totalOperatingExpenses", 0
                 ),
-                "success": True,
-                "raw_data": income_statement,
-            }
+                success=True,
+                error=None
+            )
         except Exception as e:
-            return {
-                "symbol": symbol,
-                "error": f"Failed to fetch income statement for {symbol}: {str(e)}",
-                "success": False,
-            }
+            return IncomeStatementData(
+                symbol=symbol,
+                date="Unknown",
+                period=period,
+                revenue=0,
+                gross_profit=0,
+                operating_income=0,
+                net_income=0,
+                eps=0,
+                gross_profit_ratio=0,
+                operating_income_ratio=0,
+                net_income_ratio=0,
+                research_and_development=0,
+                total_operating_expenses=0,
+                error=f"Failed to fetch income statement for {symbol}: {str(e)}",
+                success=False
+            )
 
-    def get_company_financials(self, symbol: str) -> Dict[str, Any]:
+    def get_company_financials(self, symbol: str) -> CompanyFinancialsData:
         """
         Get comprehensive company financial metrics and ratios
 
@@ -229,11 +262,29 @@ class FinancialModelingPrepTools(Toolkit):
                 or not isinstance(metrics_data, list)
                 or len(metrics_data) == 0
             ):
-                return {
-                    "symbol": symbol,
-                    "error": f"No financial data found for {symbol}",
-                    "success": False,
-                }
+                return CompanyFinancialsData(
+                    symbol=symbol,
+                    company_name="Unknown",
+                    market_cap=0,
+                    beta=0,
+                    pe_ratio=0,
+                    price_to_book=0,
+                    price_to_sales=0,
+                    debt_to_equity=0,
+                    current_ratio=0,
+                    quick_ratio=0,
+                    roe=0,
+                    roa=0,
+                    revenue_growth=0,
+                    gross_margin=0,
+                    operating_margin=0,
+                    net_margin=0,
+                    enterprise_value=0,
+                    working_capital=0,
+                    date="Unknown",
+                    error=f"No financial data found for {symbol}",
+                    success=False
+                )
 
             metrics = (
                 metrics_data[0]
@@ -249,39 +300,55 @@ class FinancialModelingPrepTools(Toolkit):
                 else {}
             )
 
-            return {
-                "symbol": symbol,
-                "company_name": profile.get("companyName", "Unknown"),
-                "market_cap": profile.get("mktCap", 0),
-                "beta": profile.get("beta", 0),
-                "pe_ratio": metrics.get("peRatio", 0),
-                "price_to_book": ratios.get("priceToBookRatio", 0),
-                "price_to_sales": ratios.get("priceToSalesRatio", 0),
-                "debt_to_equity": ratios.get("debtEquityRatio", 0),
-                "current_ratio": ratios.get("currentRatio", 0),
-                "quick_ratio": ratios.get("quickRatio", 0),
-                "roe": ratios.get("returnOnEquity", 0),
-                "roa": ratios.get("returnOnAssets", 0),
-                "revenue_growth": metrics.get("revenueGrowth", 0),
-                "gross_margin": ratios.get("grossProfitMargin", 0),
-                "operating_margin": ratios.get("operatingProfitMargin", 0),
-                "net_margin": ratios.get("netProfitMargin", 0),
-                "enterprise_value": metrics.get("enterpriseValue", 0),
-                "working_capital": metrics.get("workingCapital", 0),
-                "date": metrics.get("date", "Unknown"),
-                "success": True,
-                "raw_metrics": metrics,
-                "raw_ratios": ratios,
-                "raw_profile": profile,
-            }
+            return CompanyFinancialsData(
+                symbol=symbol,
+                company_name=profile.get("companyName", "Unknown"),
+                market_cap=profile.get("mktCap", 0),
+                beta=profile.get("beta", 0),
+                pe_ratio=metrics.get("peRatio", 0),
+                price_to_book=ratios.get("priceToBookRatio", 0),
+                price_to_sales=ratios.get("priceToSalesRatio", 0),
+                debt_to_equity=ratios.get("debtEquityRatio", 0),
+                current_ratio=ratios.get("currentRatio", 0),
+                quick_ratio=ratios.get("quickRatio", 0),
+                roe=ratios.get("returnOnEquity", 0),
+                roa=ratios.get("returnOnAssets", 0),
+                revenue_growth=metrics.get("revenueGrowth", 0),
+                gross_margin=ratios.get("grossProfitMargin", 0),
+                operating_margin=ratios.get("operatingProfitMargin", 0),
+                net_margin=ratios.get("netProfitMargin", 0),
+                enterprise_value=metrics.get("enterpriseValue", 0),
+                working_capital=metrics.get("workingCapital", 0),
+                date=metrics.get("date", "Unknown"),
+                success=True,
+                error=None
+            )
         except Exception as e:
-            return {
-                "symbol": symbol,
-                "error": f"Failed to fetch company financials for {symbol}: {str(e)}",
-                "success": False,
-            }
+            return CompanyFinancialsData(
+                symbol=symbol,
+                company_name="Unknown",
+                market_cap=0,
+                beta=0,
+                pe_ratio=0,
+                price_to_book=0,
+                price_to_sales=0,
+                debt_to_equity=0,
+                current_ratio=0,
+                quick_ratio=0,
+                roe=0,
+                roa=0,
+                revenue_growth=0,
+                gross_margin=0,
+                operating_margin=0,
+                net_margin=0,
+                enterprise_value=0,
+                working_capital=0,
+                date="Unknown",
+                error=f"Failed to fetch company financials for {symbol}: {str(e)}",
+                success=False
+            )
 
-    def get_stock_price(self, symbol: str) -> Dict[str, Any]:
+    def get_stock_price(self, symbol: str) -> StockPriceData:
         """
         Get current stock price and trading information
 
@@ -307,11 +374,28 @@ class FinancialModelingPrepTools(Toolkit):
                 or not isinstance(quote_data, list)
                 or len(quote_data) == 0
             ):
-                return {
-                    "symbol": symbol,
-                    "error": f"No price data found for {symbol}",
-                    "success": False,
-                }
+                return StockPriceData(
+                    symbol=symbol,
+                    name="Unknown",
+                    price=0,
+                    change=0,
+                    change_percent=0,
+                    previous_close=0,
+                    open=0,
+                    high=0,
+                    low=0,
+                    volume=0,
+                    avg_volume=0,
+                    market_cap=0,
+                    pe_ratio=0,
+                    eps=0,
+                    fifty_two_week_high=0,
+                    fifty_two_week_low=0,
+                    exchange="Unknown",
+                    timestamp=0,
+                    error=f"No price data found for {symbol}",
+                    success=False
+                )
 
             quote = quote_data[0]
 
@@ -323,44 +407,53 @@ class FinancialModelingPrepTools(Toolkit):
             # trend_analysis = self._analyze_price_trend(historical_data, current_price)
             # volatility_metrics = self._calculate_volatility(historical_data)
 
-            return {
-                "symbol": symbol,
-                "name": quote.get("name", "Unknown"),
-                "price": current_price,
-                "change": quote.get("change", 0),
-                "change_percent": quote.get("changesPercentage", 0),
-                "previous_close": previous_close,
-                "open": quote.get("open", 0),
-                "high": quote.get("dayHigh", 0),
-                "low": quote.get("dayLow", 0),
-                "volume": quote.get("volume", 0),
-                "avg_volume": quote.get("avgVolume", 0),
-                "market_cap": quote.get("marketCap", 0),
-                "pe_ratio": quote.get("pe", 0),
-                "eps": quote.get("eps", 0),
-                "fifty_two_week_high": quote.get("yearHigh", 0),
-                "fifty_two_week_low": quote.get("yearLow", 0),
-                "exchange": quote.get("exchange", "Unknown"),
-                "timestamp": quote.get("timestamp", int(datetime.now().timestamp())),
-                # Enhanced analytics from historical data
-                # "trend_direction": trend_analysis.get("direction", "neutral"),
-                # "trend_strength": trend_analysis.get("strength", 0),
-                # "five_day_change_percent": trend_analysis.get(
-                #     "five_day_change_percent", 0
-                # ),
-                # "price_volatility": volatility_metrics.get("volatility", 0),
-                # "volume_trend": volatility_metrics.get("volume_trend", "stable"),
-                "success": True,
-                "raw_data": quote,
-            }
+            return StockPriceData(
+                symbol=symbol,
+                name=quote.get("name", "Unknown"),
+                price=current_price,
+                change=quote.get("change", 0),
+                change_percent=quote.get("changesPercentage", 0),
+                previous_close=previous_close,
+                open=quote.get("open", 0),
+                high=quote.get("dayHigh", 0),
+                low=quote.get("dayLow", 0),
+                volume=quote.get("volume", 0),
+                avg_volume=quote.get("avgVolume", 0),
+                market_cap=quote.get("marketCap", 0),
+                pe_ratio=quote.get("pe", 0),
+                eps=quote.get("eps", 0),
+                fifty_two_week_high=quote.get("yearHigh", 0),
+                fifty_two_week_low=quote.get("yearLow", 0),
+                exchange=quote.get("exchange", "Unknown"),
+                timestamp=quote.get("timestamp", int(datetime.now().timestamp())),
+                success=True,
+                error=None
+            )
         except Exception as e:
-            return {
-                "symbol": symbol,
-                "error": f"Failed to fetch stock price for {symbol}: {str(e)}",
-                "success": False,
-            }
+            return StockPriceData(
+                symbol=symbol,
+                name="Unknown",
+                price=0,
+                change=0,
+                change_percent=0,
+                previous_close=0,
+                open=0,
+                high=0,
+                low=0,
+                volume=0,
+                avg_volume=0,
+                market_cap=0,
+                pe_ratio=0,
+                eps=0,
+                fifty_two_week_high=0,
+                fifty_two_week_low=0,
+                exchange="Unknown",
+                timestamp=0,
+                error=f"Failed to fetch stock price for {symbol}: {str(e)}",
+                success=False
+            )
 
-    def get_company_profile(self, symbol: str) -> Dict[str, Any]:
+    def get_company_profile(self, symbol: str) -> CompanyProfileData:
         """
         Get basic company profile information
 
@@ -379,35 +472,55 @@ class FinancialModelingPrepTools(Toolkit):
                 or not isinstance(profile_data, list)
                 or len(profile_data) == 0
             ):
-                return {
-                    "symbol": symbol,
-                    "error": f"No profile data found for {symbol}",
-                    "success": False,
-                }
+                return CompanyProfileData(
+                    symbol=symbol,
+                    company_name="Unknown",
+                    description="No description available",
+                    industry="Unknown",
+                    sector="Unknown",
+                    website="",
+                    ceo="Unknown",
+                    employees=0,
+                    country="Unknown",
+                    exchange="Unknown",
+                    currency="USD",
+                    error=f"No profile data found for {symbol}",
+                    success=False
+                )
 
             profile = profile_data[0]
 
-            return {
-                "symbol": symbol,
-                "company_name": profile.get("companyName", "Unknown"),
-                "description": profile.get("description", "No description available"),
-                "industry": profile.get("industry", "Unknown"),
-                "sector": profile.get("sector", "Unknown"),
-                "website": profile.get("website", ""),
-                "ceo": profile.get("ceo", "Unknown"),
-                "employees": profile.get("fullTimeEmployees", 0),
-                "country": profile.get("country", "Unknown"),
-                "exchange": profile.get("exchangeShortName", "Unknown"),
-                "currency": profile.get("currency", "USD"),
-                "success": True,
-                "raw_data": profile,
-            }
+            return CompanyProfileData(
+                symbol=symbol,
+                company_name=profile.get("companyName", "Unknown"),
+                description=profile.get("description", "No description available"),
+                industry=profile.get("industry", "Unknown"),
+                sector=profile.get("sector", "Unknown"),
+                website=profile.get("website", ""),
+                ceo=profile.get("ceo", "Unknown"),
+                employees=profile.get("fullTimeEmployees", 0),
+                country=profile.get("country", "Unknown"),
+                exchange=profile.get("exchangeShortName", "Unknown"),
+                currency=profile.get("currency", "USD"),
+                success=True,
+                error=None
+            )
         except Exception as e:
-            return {
-                "symbol": symbol,
-                "error": f"Failed to fetch company profile for {symbol}: {str(e)}",
-                "success": False,
-            }
+            return CompanyProfileData(
+                symbol=symbol,
+                company_name="Unknown",
+                description="No description available",
+                industry="Unknown",
+                sector="Unknown",
+                website="",
+                ceo="Unknown",
+                employees=0,
+                country="Unknown",
+                exchange="Unknown",
+                currency="USD",
+                error=f"Failed to fetch company profile for {symbol}: {str(e)}",
+                success=False
+            )
 
     # def _analyze_price_trend(
     #     self,

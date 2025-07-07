@@ -25,6 +25,10 @@ class RouterResult(BaseModel):
     )
 
 
+class Extraction(BaseModel):
+    symbol: str = Field(description="The symbol of the company")
+
+
 class SymbolSearchResult(BaseModel):
     """Result from symbol search/extraction"""
 
@@ -279,8 +283,37 @@ class ErrorInfo(BaseModel):
     retry_suggested: bool = Field(False, description="Whether retry is suggested")
 
 
+# New models for message and summary management
+
+class ConversationMessage(BaseModel):
+    """Message in the conversation history"""
+    role: Literal["user", "agent"]
+    content: str
+    agent_name: Optional[str] = None
+    timestamp: datetime = Field(default_factory=datetime.now)
+    structured_data: Optional[Dict[str, Any]] = None  # For agent response data
+
+
+class WorkflowSummary(BaseModel):
+    """Conversation summary with metadata"""
+    summary: str = Field(..., description="Main conversation summary")
+    key_topics: List[str] = Field(default_factory=list, description="Key discussion topics")
+    companies_mentioned: List[str] = Field(default_factory=list, description="Companies discussed")
+    last_updated: datetime = Field(default_factory=datetime.now)
+    message_count_at_generation: int = Field(0, description="Message count when summary was generated")
+
+
+class ChatResponse(BaseModel):
+    """Structured response from chat agent"""
+    content: str = Field(..., description="Main response content")
+    educational_context: Optional[str] = Field(None, description="Educational explanation if applicable")
+    references: List[str] = Field(default_factory=list, description="References or sources")
+    follow_up_suggestions: List[str] = Field(default_factory=list, description="Suggested follow-up questions")
+    confidence: Optional[float] = Field(None, ge=0, le=1, description="Response confidence")
+
+
 # Type aliases for convenience
 FinancialDataType = Union[
     IncomeStatementData, CompanyFinancialsData, StockPriceData, CompanyProfileData
 ]
-WorkflowResponse = Union[str, FinancialReport, AgentResponse]
+WorkflowResponse = Union[str, FinancialReport, AgentResponse, ChatResponse]

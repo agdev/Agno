@@ -10,30 +10,31 @@ from pathlib import Path
 from typing import List, Literal, Optional, Tuple
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing_extensions import Annotated
 
 
 def find_env_file() -> Optional[str]:
     """
     Find .env file by searching from current file up to project root
-    
+
     Returns:
         Path to .env file if found, None otherwise
     """
     # Start from the current file's directory
     current_dir = Path(__file__).parent
-    
+
     # Search up the directory tree for .env file
     for path in [current_dir] + list(current_dir.parents):
-        env_file = path / ".env"
+        env_file = Path(path, "env", ".env")
         if env_file.exists():
             return str(env_file)
-    
+
     # Also check current working directory as fallback
     cwd_env = Path.cwd() / ".env"
     if cwd_env.exists():
         return str(cwd_env)
-    
+
     return None
 
 
@@ -62,9 +63,14 @@ class Settings(BaseSettings):
     )
 
     # LLM Configuration
-    default_llm_provider: Literal["anthropic", "openai", "groq"] = Field(
-        "anthropic", description="Default LLM provider to use"
-    )
+    default_llm_provider: Annotated[
+        str,
+        Field(
+            "anthropic",
+            alias="llm_provider",  # Support both DEFAULT_LLM_PROVIDER and LLM_PROVIDER
+            description="Default LLM provider to use (anthropic, openai, or groq)",
+        ),
+    ]
 
     # Application Configuration
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = Field(
@@ -103,12 +109,11 @@ class Settings(BaseSettings):
 
     # Session Storage Configuration
     storage_db_file: str = Field(
-        "tmp/financial_assistant_sessions.db", 
-        description="SQLite database file for session storage"
+        "tmp/financial_assistant_sessions.db",
+        description="SQLite database file for session storage",
     )
     storage_table_name: str = Field(
-        "agent_sessions", 
-        description="Table name for agent session storage"
+        "agent_sessions", description="Table name for agent session storage"
     )
 
     # Session Summary Configuration
@@ -122,14 +127,14 @@ class Settings(BaseSettings):
         500, description="Maximum length for session summaries in characters"
     )
 
-    # Chat History Configuration  
+    # Chat History Configuration
     add_history_to_messages: bool = Field(
         True, description="Add chat history to messages sent to agents"
     )
     num_history_responses: int = Field(
         3, description="Number of previous messages to include in agent context"
     )
-    
+
     # Session Management
     auto_generate_session_id: bool = Field(
         True, description="Automatically generate session IDs if not provided"
@@ -138,15 +143,27 @@ class Settings(BaseSettings):
         24, description="Session timeout in hours for cleanup"
     )
 
-    class Config:
-        env_file = find_env_file()  # Automatically find .env file
-        env_file_encoding = "utf-8"
-        case_sensitive = False
+    model_config = SettingsConfigDict(
+        env_file=find_env_file(),  # Automatically find .env file
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        populate_by_name=True,  # Allow field names and aliases
+    )
 
     @field_validator("default_llm_provider")
     @classmethod
     def validate_llm_provider(cls, v, info):
-        """Ensure the default LLM provider has a corresponding API key"""
+        """Ensure the default LLM provider has a corresponding API key and normalize case"""
+        # First normalize the case (handle Groq, groq, GROQ, etc.)
+        v = v.lower()
+
+        # Validate that it's a known provider
+        valid_providers = ["anthropic", "openai", "groq"]
+        if v not in valid_providers:
+            raise ValueError(
+                f"Invalid LLM provider '{v}'. Must be one of: {', '.join(valid_providers)}"
+            )
+
         if info.data:
             values = info.data
             if v == "anthropic" and not values.get("anthropic_api_key"):
@@ -197,7 +214,7 @@ class Settings(BaseSettings):
         model_mapping = {
             "anthropic": "claude-sonnet-4-20250514",
             "openai": "gpt-4o",
-            "groq": "llama-3-70b-8192",  # Example Groq model
+            "groq": "llama-3.3-70b-versatile",  # Example Groq model
         }
         return model_mapping.get(provider)
 
