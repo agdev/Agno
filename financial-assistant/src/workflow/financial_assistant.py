@@ -5,16 +5,23 @@ This module implements the main FinancialAssistantWorkflow class that orchestrat
 the entire financial assistant application using Agno's Level 5 Agentic Workflow pattern.
 """
 
+import asyncio
 from datetime import datetime
-from typing import Any, Iterator, Optional
+from typing import Any, AsyncIterator, Iterator, Optional
 
 from agno.agent import Agent
 from agno.models.anthropic import Claude
-from agno.run.response import RunResponse
+from agno.run.response import RunResponse, RunResponseErrorEvent, RunResponseCompletedEvent
 from agno.storage.sqlite import SqliteStorage
 from agno.workflow import Workflow
 from config.settings import Settings
-from models.schemas import Extraction, RouterResult, ConversationMessage, WorkflowSummary, ChatResponse
+from models.schemas import (
+    ChatResponse,
+    ConversationMessage,
+    Extraction,
+    RouterResult,
+    WorkflowSummary,
+)
 
 # Import tools, models, and configuration
 from tools.financial_modeling_prep import FinancialModelingPrepTools
@@ -53,21 +60,19 @@ class FinancialAssistantWorkflow(Workflow):
         self.settings = settings or Settings()
 
         # Initialize session state structure for conversation management
-        if not hasattr(self, 'session_state') or not self.session_state:
+        if not hasattr(self, "session_state") or not self.session_state:
             self.session_state = {
                 # Persistent conversation data
-                'messages': [],  # List[ConversationMessage] - Full conversation history
-                'conversation_summary': None,  # WorkflowSummary - Current summary
-                'last_summary_message_count': 0,  # int - Track when summary was generated
-                
+                "messages": [],  # List[ConversationMessage] - Full conversation history
+                "conversation_summary": None,  # WorkflowSummary - Current summary
+                "last_summary_message_count": 0,  # int - Track when summary was generated
                 # User context
-                'user_preferences': {},  # Dict - User settings and preferences
-                'companies_discussed': [],  # List[str] - Companies mentioned in conversation
-                
+                "user_preferences": {},  # Dict - User settings and preferences
+                "companies_discussed": [],  # List[str] - Companies mentioned in conversation
                 # Transient workflow state (not critical for persistence)
-                'current_category': None,
-                'current_symbol': None,
-                'workflow_path': None,
+                "current_category": None,
+                "current_symbol": None,
+                "workflow_path": None,
             }
 
         # Initialize storage for session management
@@ -168,7 +173,6 @@ class FinancialAssistantWorkflow(Workflow):
             # Note: Removed storage from agents to avoid storage mode conflicts
             # add_history_to_messages=self.settings.add_history_to_messages,
             # num_history_responses=self.settings.num_history_responses,
-            response_model=ChatResponse,  # Structured response
             instructions=[
                 "Provide conversational responses about finance using conversation context",
                 "Structure responses with main content and educational context",
@@ -182,6 +186,7 @@ class FinancialAssistantWorkflow(Workflow):
                 "Reference previous topics and companies discussed in the conversation",
                 "Adapt explanations based on user's demonstrated understanding level",
             ],
+            response_model=ChatResponse,  # Structured response
         )
 
         # Summary Agent - Generates and updates conversation summaries
@@ -204,158 +209,154 @@ class FinancialAssistantWorkflow(Workflow):
 
     def _get_conversation_context(self) -> str:
         """
-        Generate conversation context from workflow state
+        Generate efficient conversation context - no duplication
 
         Returns:
             Formatted context string for agent consumption
         """
-        
-        # Get current summary
-        summary = self.session_state.get('conversation_summary')
-        summary_text = summary.summary if summary else "No previous conversation"
-        
-        # Get recent messages (last 3-5)
-        recent_messages = self.session_state.get('messages', [])[-5:]
-        recent_context = []
-        
-        for msg in recent_messages:
-            if isinstance(msg, dict):
-                # Handle dict format
-                role_prefix = "User" if msg.get('role') == "user" else f"Agent ({msg.get('agent_name', 'Unknown')})"
-                recent_context.append(f"{role_prefix}: {msg.get('content', '')}")
-            else:
-                # Handle ConversationMessage object
-                role_prefix = "User" if msg.role == "user" else f"Agent ({msg.agent_name})"
-                recent_context.append(f"{role_prefix}: {msg.content}")
-        
-        context = f"""
-Conversation Summary: {summary_text}
+        summary = self.session_state.get("conversation_summary")
+        companies = self.session_state.get("companies_discussed", [])
 
-Recent Messages:
-{chr(10).join(recent_context)}
-
-Companies Previously Discussed: {', '.join(self.session_state.get('companies_discussed', []))}
-"""
-        
-        return context.strip()
+        if summary:
+            # Use compressed summary instead of raw messages
+            summary_text = (
+                summary.summary if hasattr(summary, "summary") else str(summary)
+            )
+            companies_text = (
+                f"\nCompanies discussed: {', '.join(companies)}" if companies else ""
+            )
+            return f"Previous conversation: {summary_text}{companies_text}"
+        else:
+            # Early conversation - only company tracking needed
+            return f"Companies discussed: {', '.join(companies)}" if companies else ""
 
     def _update_conversation_summary(self) -> Optional[WorkflowSummary]:
         """
-        Generate or update conversation summary when needed
-        
+        Generate or update conversation summary after EVERY round
+
         Returns:
             Updated WorkflowSummary or None if no update needed
         """
-        message_count = len(self.session_state.get('messages', []))
-        last_count = self.session_state.get('last_summary_message_count', 0)
-        
-        # Generate summary every 5-10 messages
-        if message_count - last_count >= 5:
-            new_messages = self.session_state['messages'][last_count:]
-            existing_summary = self.session_state.get('conversation_summary')
-            
+        message_count = len(self.session_state.get("messages", []))
+        last_count = self.session_state.get("last_summary_message_count", 0)
+
+        # Always update summary if there are new messages
+        if message_count > last_count and last_count > 0:
+            new_messages = self.session_state["messages"][last_count:]
+            existing_summary = self.session_state.get("conversation_summary")
+
             # Prepare context for summary agent
             summary_context_parts = []
-            
+
             if existing_summary:
                 if isinstance(existing_summary, dict):
-                    summary_context_parts.append(f"Previous summary: {existing_summary.get('summary', '')}")
+                    summary_context_parts.append(
+                        f"Previous summary: {existing_summary.get('summary', '')}"
+                    )
                 else:
-                    summary_context_parts.append(f"Previous summary: {existing_summary.summary}")
-            
+                    summary_context_parts.append(
+                        f"Previous summary: {existing_summary.summary}"
+                    )
+
             summary_context_parts.append("\nNew messages to summarize:")
             for msg in new_messages:
                 if isinstance(msg, dict):
-                    role = msg.get('role', 'unknown')
-                    content = msg.get('content', '')
-                    agent_name = msg.get('agent_name', 'Unknown') if role == 'agent' else ''
-                    summary_context_parts.append(f"- {role.title()}{f' ({agent_name})' if agent_name else ''}: {content}")
+                    role = msg.get("role", "unknown")
+                    content = msg.get("content", "")
+                    agent_name = (
+                        msg.get("agent_name", "Unknown") if role == "agent" else ""
+                    )
+                    summary_context_parts.append(
+                        f"- {role.title()}{f' ({agent_name})' if agent_name else ''}: {content}"
+                    )
                 else:
-                    role = getattr(msg, 'role', 'unknown')
-                    content = getattr(msg, 'content', '')
-                    agent_name = getattr(msg, 'agent_name', 'Unknown') if role == 'agent' else ''
-                    summary_context_parts.append(f"- {role.title()}{f' ({agent_name})' if agent_name else ''}: {content}")
-            
-            summary_context_parts.append(f"\nTotal messages in conversation: {message_count}")
-            
+                    role = getattr(msg, "role", "unknown")
+                    content = getattr(msg, "content", "")
+                    agent_name = (
+                        getattr(msg, "agent_name", "Unknown") if role == "agent" else ""
+                    )
+                    summary_context_parts.append(
+                        f"- {role.title()}{f' ({agent_name})' if agent_name else ''}: {content}"
+                    )
+
+            summary_context_parts.append(
+                f"\nTotal messages in conversation: {message_count}"
+            )
+
             summary_context = "\n".join(summary_context_parts)
-            
+
             try:
                 # Generate updated summary
                 summary_response = self.summary_agent.run(summary_context)
-                
+
                 # Extract the actual WorkflowSummary from the response
-                if hasattr(summary_response, 'content') and hasattr(summary_response.content, 'summary'):
+                if hasattr(summary_response, "content") and hasattr(
+                    summary_response.content, "summary"
+                ):
                     # Response contains WorkflowSummary in content
                     updated_summary = summary_response.content
-                    self.session_state['conversation_summary'] = updated_summary
-                    self.session_state['last_summary_message_count'] = message_count
+                    self.session_state["conversation_summary"] = updated_summary
+                    self.session_state["last_summary_message_count"] = message_count
                     return updated_summary
-                elif hasattr(summary_response, 'content'):
+                elif hasattr(summary_response, "content"):
                     # Simple string response, create WorkflowSummary wrapper
                     updated_summary = WorkflowSummary(
                         summary=str(summary_response.content),
-                        message_count_at_generation=message_count
+                        message_count_at_generation=message_count,
                     )
-                    self.session_state['conversation_summary'] = updated_summary
-                    self.session_state['last_summary_message_count'] = message_count
+                    self.session_state["conversation_summary"] = updated_summary
+                    self.session_state["last_summary_message_count"] = message_count
                     return updated_summary
                 else:
                     return None
-                
+
             except Exception as e:
                 print(f"Warning: Could not generate conversation summary: {e}")
                 return None
-        
-        return self.session_state.get('conversation_summary')
 
-    def get_conversation_context(self, session_id: Optional[str] = None) -> str:
-        """
-        Get formatted conversation context for agents
+        return self.session_state.get("conversation_summary")
 
-        Args:
-            session_id: Optional session ID for context retrieval (deprecated - uses workflow state)
-
-        Returns:
-            Formatted context string for agent consumption
-        """
-        # Use the new workflow-level context generation
-        return self._get_conversation_context()
 
     def _compose_financial_report(
-        self, 
+        self,
         symbol: str,
         income_data,  # IncomeStatementData
         financials_data,  # CompanyFinancialsData
-        price_data  # StockPriceData
+        price_data,  # StockPriceData
     ) -> str:
         """
         Manually compose financial report from structured data
-        
+
         Args:
             symbol: Stock symbol
             income_data: Income statement data from API
-            financials_data: Company financials data from API  
+            financials_data: Company financials data from API
             price_data: Stock price data from API
-            
+
         Returns:
             Formatted markdown report
         """
-        
+
         # Auto-generate insights based on data
-        key_insights = self._generate_key_insights(income_data, financials_data, price_data)
-        
+        key_insights = self._generate_key_insights(
+            income_data, financials_data, price_data
+        )
+
         # Get company name from data
         company_name = (
-            getattr(financials_data, 'company_name', None) or 
-            getattr(price_data, 'name', None) or 
-            symbol
+            getattr(financials_data, "company_name", None)
+            or getattr(price_data, "name", None)
+            or symbol
         )
-        
+
         # Calculate quality scores
-        data_quality_score = self._calculate_data_quality(income_data, financials_data, price_data)
-        completeness_score = self._calculate_completeness(income_data, financials_data, price_data)
-        
+        data_quality_score = self._calculate_data_quality(
+            income_data, financials_data, price_data
+        )
+        completeness_score = self._calculate_completeness(
+            income_data, financials_data, price_data
+        )
+
         # Compose the report
         report = f"""# Financial Report - {symbol} ({company_name})
 
@@ -366,7 +367,7 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
 **Data Completeness**: {completeness_score:.1%}
 
 ## Key Insights
-{chr(10).join(f'• {insight}' for insight in key_insights)}
+{chr(10).join(f"• {insight}" for insight in key_insights)}
 
 ## Financial Data
 
@@ -382,44 +383,50 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
 ## Analysis Summary
 
 **Strengths:**
-{chr(10).join(f'• {strength}' for strength in self._identify_strengths(income_data, financials_data, price_data))}
+{chr(10).join(f"• {strength}" for strength in self._identify_strengths(income_data, financials_data, price_data))}
 
 **Areas of Attention:**
-{chr(10).join(f'• {concern}' for concern in self._identify_concerns(income_data, financials_data, price_data))}
+{chr(10).join(f"• {concern}" for concern in self._identify_concerns(income_data, financials_data, price_data))}
 
 ---
-*Report generated at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} UTC*
+*Report generated at {datetime.now().strftime("%Y-%m-%d %H:%M:%S")} UTC*
 """
-        
+
         return report
 
-    def _generate_key_insights(self, income_data, financials_data, price_data) -> list[str]:
+    def _generate_key_insights(
+        self, income_data, financials_data, price_data
+    ) -> list[str]:
         """Generate key insights from financial data"""
         insights = []
-        
+
         # Revenue analysis
-        revenue = getattr(income_data, 'revenue', 0)
+        revenue = getattr(income_data, "revenue", 0)
         if revenue > 0:
             insights.append(f"Revenue: ${revenue:,.0f}")
-        
+
         # Profitability analysis
-        net_income_ratio = getattr(income_data, 'net_income_ratio', 0)
+        net_income_ratio = getattr(income_data, "net_income_ratio", 0)
         if net_income_ratio > 0:
             insights.append(f"Net margin: {net_income_ratio:.1%}")
-        
+
         # Valuation analysis
-        pe_ratio = getattr(financials_data, 'pe_ratio', 0) or getattr(price_data, 'pe_ratio', 0)
+        pe_ratio = getattr(financials_data, "pe_ratio", 0) or getattr(
+            price_data, "pe_ratio", 0
+        )
         if pe_ratio and pe_ratio > 0:
             insights.append(f"P/E ratio: {pe_ratio:.2f}")
-        
+
         # Performance analysis
-        change_percent = getattr(price_data, 'change_percent', 0)
+        change_percent = getattr(price_data, "change_percent", 0)
         if change_percent != 0:
             direction = "up" if change_percent > 0 else "down"
             insights.append(f"Stock {direction} {abs(change_percent):.2f}% today")
-        
+
         # Market cap
-        market_cap = getattr(financials_data, 'market_cap', 0) or getattr(price_data, 'market_cap', 0)
+        market_cap = getattr(financials_data, "market_cap", 0) or getattr(
+            price_data, "market_cap", 0
+        )
         if market_cap > 0:
             if market_cap > 200_000_000_000:
                 insights.append("Large-cap company (>$200B)")
@@ -427,105 +434,132 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
                 insights.append("Mid-cap company ($10B-$200B)")
             else:
                 insights.append("Small-cap company (<$10B)")
-        
+
         return insights if insights else ["Financial data analysis in progress"]
 
-    def _identify_strengths(self, income_data, financials_data, price_data) -> list[str]:
+    def _identify_strengths(
+        self, income_data, financials_data, price_data
+    ) -> list[str]:
         """Identify company strengths from financial data"""
         strengths = []
-        
+
         # High profitability
-        net_margin = getattr(income_data, 'net_income_ratio', 0)
+        net_margin = getattr(income_data, "net_income_ratio", 0)
         if net_margin > 0.15:
             strengths.append(f"Strong profitability with {net_margin:.1%} net margin")
-        
+
         # Good ROE
-        roe = getattr(financials_data, 'roe', 0)
+        roe = getattr(financials_data, "roe", 0)
         if roe > 0.15:
             strengths.append(f"Excellent return on equity at {roe:.1%}")
-        
+
         # Low debt
-        debt_to_equity = getattr(financials_data, 'debt_to_equity', 0)
+        debt_to_equity = getattr(financials_data, "debt_to_equity", 0)
         if 0 < debt_to_equity < 0.3:
             strengths.append("Conservative debt levels")
-        
+
         # Strong growth (if available)
-        revenue_growth = getattr(financials_data, 'revenue_growth', 0)
+        revenue_growth = getattr(financials_data, "revenue_growth", 0)
         if revenue_growth > 0.1:
             strengths.append(f"Strong revenue growth at {revenue_growth:.1%}")
-        
-        return strengths if strengths else ["Detailed analysis requires additional data"]
+
+        return (
+            strengths if strengths else ["Detailed analysis requires additional data"]
+        )
 
     def _identify_concerns(self, income_data, financials_data, price_data) -> list[str]:
         """Identify potential areas of concern"""
         concerns = []
-        
+
         # Low profitability
-        net_margin = getattr(income_data, 'net_income_ratio', 0)
+        net_margin = getattr(income_data, "net_income_ratio", 0)
         if net_margin < 0:
             concerns.append("Company is currently unprofitable")
         elif net_margin < 0.05:
             concerns.append("Low profit margins")
-        
+
         # High debt
-        debt_to_equity = getattr(financials_data, 'debt_to_equity', 0)
+        debt_to_equity = getattr(financials_data, "debt_to_equity", 0)
         if debt_to_equity > 1.0:
             concerns.append("High debt levels relative to equity")
-        
+
         # Poor ROE
-        roe = getattr(financials_data, 'roe', 0)
+        roe = getattr(financials_data, "roe", 0)
         if 0 < roe < 0.05:
             concerns.append("Low return on equity")
-        
+
         # High valuation
-        pe_ratio = getattr(financials_data, 'pe_ratio', 0) or getattr(price_data, 'pe_ratio', 0)
+        pe_ratio = getattr(financials_data, "pe_ratio", 0) or getattr(
+            price_data, "pe_ratio", 0
+        )
         if pe_ratio and pe_ratio > 30:
-            concerns.append(f"High P/E ratio at {pe_ratio:.1f} may indicate overvaluation")
-        
+            concerns.append(
+                f"High P/E ratio at {pe_ratio:.1f} may indicate overvaluation"
+            )
+
         return concerns if concerns else ["No significant concerns identified"]
 
-    def _calculate_data_quality(self, income_data, financials_data, price_data) -> float:
+    def _calculate_data_quality(
+        self, income_data, financials_data, price_data
+    ) -> float:
         """Calculate data quality score based on available information"""
         total_fields = 0
         filled_fields = 0
-        
+
         # Check income statement data
         income_fields = ["revenue", "net_income", "eps", "net_income_ratio"]
         for field in income_fields:
             total_fields += 1
-            if getattr(income_data, field, None) is not None and getattr(income_data, field, 0) != 0:
+            if (
+                getattr(income_data, field, None) is not None
+                and getattr(income_data, field, 0) != 0
+            ):
                 filled_fields += 1
-        
+
         # Check financials data
         financial_fields = ["pe_ratio", "market_cap", "roe", "debt_to_equity"]
         for field in financial_fields:
             total_fields += 1
-            if getattr(financials_data, field, None) is not None and getattr(financials_data, field, 0) != 0:
+            if (
+                getattr(financials_data, field, None) is not None
+                and getattr(financials_data, field, 0) != 0
+            ):
                 filled_fields += 1
-        
+
         # Check price data
         price_fields = ["price", "change", "volume"]
         for field in price_fields:
             total_fields += 1
-            if getattr(price_data, field, None) is not None and getattr(price_data, field, 0) != 0:
+            if (
+                getattr(price_data, field, None) is not None
+                and getattr(price_data, field, 0) != 0
+            ):
                 filled_fields += 1
-        
+
         return filled_fields / total_fields if total_fields > 0 else 0.0
 
-    def _calculate_completeness(self, income_data, financials_data, price_data) -> float:
+    def _calculate_completeness(
+        self, income_data, financials_data, price_data
+    ) -> float:
         """Calculate completeness score based on data sections available"""
         sections_available = 0
         total_sections = 3
-        
-        if income_data and any(getattr(income_data, field, 0) for field in ["revenue", "net_income"]):
+
+        if income_data and any(
+            getattr(income_data, field, 0) for field in ["revenue", "net_income"]
+        ):
             sections_available += 1
-        
-        if financials_data and any(getattr(financials_data, field, 0) for field in ["pe_ratio", "market_cap"]):
+
+        if financials_data and any(
+            getattr(financials_data, field, 0) for field in ["pe_ratio", "market_cap"]
+        ):
             sections_available += 1
-            
-        if price_data and any(getattr(price_data, field, 0) for field in ["price", "change"]):
+
+        if price_data and any(
+            getattr(price_data, field, 0) for field in ["price", "change"]
+        ):
             sections_available += 1
-        
+
         return sections_available / total_sections
 
     def _format_financial_data(self, data, data_type: str, symbol: str) -> str:
@@ -556,18 +590,18 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
         return f"""# Income Statement - {symbol}
 
 ## Revenue
-- Total Revenue: {getattr(data, 'revenue', 'N/A')}
-- Gross Profit: {getattr(data, 'gross_profit', 'N/A')}
+- Total Revenue: {getattr(data, "revenue", "N/A")}
+- Gross Profit: {getattr(data, "gross_profit", "N/A")}
 
 ## Expenses & Income
-- Operating Income: {getattr(data, 'operating_income', 'N/A')}
-- Net Income: {getattr(data, 'net_income', 'N/A')}
+- Operating Income: {getattr(data, "operating_income", "N/A")}
+- Net Income: {getattr(data, "net_income", "N/A")}
 
 ## Key Metrics
-- EPS: {getattr(data, 'eps', 'N/A')}
-- Operating Margin: {getattr(data, 'operating_income_ratio', 'N/A')}
+- EPS: {getattr(data, "eps", "N/A")}
+- Operating Margin: {getattr(data, "operating_income_ratio", "N/A")}
 
-*Data period: {getattr(data, 'date', 'N/A')}*
+*Data period: {getattr(data, "date", "N/A")}*
 """
 
     def _format_company_financials(self, data, symbol: str) -> str:
@@ -575,19 +609,19 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
         return f"""# Company Financials - {symbol}
 
 ## Valuation Metrics
-- P/E Ratio: {getattr(data, 'pe_ratio', 'N/A')}
-- Market Cap: {getattr(data, 'market_cap', 'N/A')}
-- Enterprise Value: {getattr(data, 'enterprise_value', 'N/A')}
+- P/E Ratio: {getattr(data, "pe_ratio", "N/A")}
+- Market Cap: {getattr(data, "market_cap", "N/A")}
+- Enterprise Value: {getattr(data, "enterprise_value", "N/A")}
 
 ## Financial Ratios
-- ROE: {getattr(data, 'roe', 'N/A')}
-- ROA: {getattr(data, 'roa', 'N/A')}
-- Debt to Equity: {getattr(data, 'debt_to_equity', 'N/A')}
+- ROE: {getattr(data, "roe", "N/A")}
+- ROA: {getattr(data, "roa", "N/A")}
+- Debt to Equity: {getattr(data, "debt_to_equity", "N/A")}
 
 ## Profitability
-- Gross Margin: {getattr(data, 'gross_margin', 'N/A')}
-- Operating Margin: {getattr(data, 'operating_margin', 'N/A')}
-- Net Margin: {getattr(data, 'net_margin', 'N/A')}
+- Gross Margin: {getattr(data, "gross_margin", "N/A")}
+- Operating Margin: {getattr(data, "operating_margin", "N/A")}
+- Net Margin: {getattr(data, "net_margin", "N/A")}
 """
 
     def _format_stock_price(self, data, symbol: str) -> str:
@@ -595,18 +629,18 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
         return f"""# Stock Price - {symbol}
 
 ## Current Price
-- Price: ${getattr(data, 'price', 'N/A')}
-- Change: {getattr(data, 'change', 'N/A')} ({getattr(data, 'change_percent', 'N/A')}%)
+- Price: ${getattr(data, "price", "N/A")}
+- Change: {getattr(data, "change", "N/A")} ({getattr(data, "change_percent", "N/A")}%)
 
 ## Trading Data
-- Volume: {getattr(data, 'volume', 'N/A')}
-- Market Cap: {getattr(data, 'market_cap', 'N/A')}
+- Volume: {getattr(data, "volume", "N/A")}
+- Market Cap: {getattr(data, "market_cap", "N/A")}
 
 ## 52-Week Range
-- High: ${getattr(data, 'fifty_two_week_high', 'N/A')}
-- Low: ${getattr(data, 'fifty_two_week_low', 'N/A')}
+- High: ${getattr(data, "fifty_two_week_high", "N/A")}
+- Low: ${getattr(data, "fifty_two_week_low", "N/A")}
 
-*Last updated: {getattr(data, 'timestamp', 'N/A')}*
+*Last updated: {getattr(data, "timestamp", "N/A")}*
 """
 
     def run(self, **kwargs: Any) -> Iterator[RunResponse]:  # type: ignore[override]
@@ -623,54 +657,65 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
             RunResponse: Stream of responses from the workflow execution
         """
 
+        # Clean session state before any storage operations
+        self._clean_session_state_for_storage()
+
         # Extract and validate message
         message = kwargs.get("message", "")
         if not message:
-            yield RunResponse(run_id=self.run_id, content="No message provided")
+            yield RunResponse(
+                run_id=self.run_id, 
+                content="No message provided",
+                            )
             return
 
         # Track user input
-        user_message = ConversationMessage(
-            role="user",
-            content=message,
-            timestamp=datetime.now()
-        )
-        
+        user_message = ConversationMessage(role="user", content=message)
+
         # Ensure messages list exists
-        if 'messages' not in self.session_state:
-            self.session_state['messages'] = []
-        
-        self.session_state['messages'].append(user_message.dict())
-        
+        if "messages" not in self.session_state:
+            self.session_state["messages"] = []
+
+        self.session_state["messages"].append(user_message.model_dump())
+
         # Update conversation summary if needed
         self._update_conversation_summary()
-        
+
         # Get conversation context for agents
         conversation_context = self._get_conversation_context()
 
         # Step 1: Route the request with conversation context
-        category_response = self.router_agent.run(
-            f"User request: {message}\n{conversation_context}"
-        )
-        
+        category_response = self.router_agent.run(f"User request: {message}\n{conversation_context}")
+
+        # Extract category from RouterResult object
+        if category_response and hasattr(category_response, "content") and category_response.content:
+            if hasattr(category_response.content, "category"):
+                # RouterResult object
+                category = category_response.content.category
+                router_content = category
+            else:
+                # String content
+                router_content = category_response.content
+                category = router_content.strip().lower()
+        else:
+            # Fallback to chat
+            router_content = "chat"
+            category = "chat"
+
         # Track router agent response
-        router_content = category_response.content if category_response.content else "chat"
         router_message = ConversationMessage(
             role="agent",
             content=router_content,
             agent_name="Router Agent",
-            structured_data={"category": router_content}
+            structured_data={"category": category},
         )
-        self.session_state['messages'].append(router_message.dict())
+        self.session_state["messages"].append(router_message.model_dump())
 
-        # Handle potential None content
-        category_content = (
-            category_response.content if category_response.content else "chat"
-        )
-        category = category_content.strip().lower()
+        # Ensure category is lowercase for comparison
+        category = category.strip().lower()
         self.session_state["category"] = category
 
-        # Step 2: Conditional flow based on category
+        # Step 2: Conditional flow based on category - use sync methods
         if category == "report":
             yield from self._run_report_flow(message)
         elif category == "chat":
@@ -678,7 +723,92 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
         else:  # income_statement, company_financials, stock_price
             yield from self._run_alone_flow(message, category)
 
-    def _run_report_flow(self, message: str) -> Iterator[RunResponse]:
+    async def arun(self, **kwargs: Any) -> AsyncIterator[RunResponse]:  # type: ignore[override]
+        """
+        Asynchronous version of the main workflow execution implementing the three flow patterns:
+        1. Single Information Flow (alone path)
+        2. Comprehensive Report Flow (report path)
+        3. Chat Flow
+
+        Args:
+            **kwargs: Keyword arguments including 'message' for user input
+
+        Yields:
+            RunResponse: Stream of responses from the workflow execution
+        """
+
+        # Clean session state before any storage operations
+        self._clean_session_state_for_storage()
+
+        # Extract and validate message
+        message = kwargs.get("message", "")
+        if not message:
+            yield RunResponse(
+                run_id=self.run_id, 
+                content="No message provided",
+                            )
+            return
+
+        # Track user input
+        user_message = ConversationMessage(role="user", content=message)
+
+        # Ensure messages list exists
+        if "messages" not in self.session_state:
+            self.session_state["messages"] = []
+
+        self.session_state["messages"].append(user_message.model_dump())
+
+        # Update conversation summary if needed
+        self._update_conversation_summary()
+
+        # Get conversation context for agents
+        conversation_context = self._get_conversation_context()
+
+        # Step 1: Route the request with conversation context
+        category_response = await self.router_agent.arun(f"User request: {message}\n{conversation_context}")
+
+        # Extract category from RouterResult object
+        if category_response and hasattr(category_response, "content") and category_response.content:
+            if hasattr(category_response.content, "category"):
+                # RouterResult object
+                category = category_response.content.category
+                router_content = category
+            else:
+                # String content
+                router_content = category_response.content
+                category = router_content.strip().lower()
+        else:
+            # Fallback to chat
+            router_content = "chat"
+            category = "chat"
+
+        # Track router agent response
+        router_message = ConversationMessage(
+            role="agent",
+            content=router_content,
+            agent_name="Router Agent",
+            structured_data={"category": category},
+        )
+        self.session_state["messages"].append(router_message.model_dump())
+
+        # Ensure category is lowercase for comparison
+        category = category.strip().lower()
+        self.session_state["category"] = category
+
+        # Step 2: Conditional flow based on category - async methods
+        if category == "report":
+            async for response in self._arun_report_flow(message):
+                yield response
+        elif category == "chat":
+            async for response in self._arun_chat_flow(message):
+                yield response
+        else:  # income_statement, company_financials, stock_price
+            async for response in self._arun_alone_flow(message, category):
+                yield response
+
+    def _run_report_flow(
+        self, message: str
+    ) -> Iterator[RunResponse]:
         """
         Comprehensive Report Flow - Parallel data collection + aggregation
 
@@ -694,54 +824,77 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
         """
 
         # Extract symbol with conversation context
-        conversation_context = self.get_conversation_context()
+        conversation_context = self._get_conversation_context()
         symbol_response = self.symbol_extraction_agent.run(
             f"Extract symbol from: {message}\n{conversation_context}"
         )
-        symbol_content = (
-            symbol_response.content if symbol_response.content else "UNKNOWN"
-        )
-        symbol = symbol_content.strip()
+
+        # Extract symbol from Extraction object
+        if symbol_response and hasattr(symbol_response, "content") and symbol_response.content:
+            if hasattr(symbol_response.content, "symbol"):
+                # Extraction object with symbol attribute
+                symbol = symbol_response.content.symbol
+            else:
+                # String content
+                symbol = symbol_response.content.strip()
+        else:
+            # Fallback
+            symbol = "UNKNOWN"
 
         # Track symbol extraction response
         symbol_message = ConversationMessage(
             role="agent",
             content=f"Extracted symbol: {symbol}",
             agent_name="Symbol Extraction Agent",
-            structured_data={"symbol": symbol, "extraction_successful": symbol != "UNKNOWN"}
+            structured_data={
+                "symbol": symbol,
+                "extraction_successful": symbol != "UNKNOWN",
+            },
         )
-        self.session_state['messages'].append(symbol_message.dict())
+        self.session_state["messages"].append(symbol_message.model_dump())
 
         if symbol == "UNKNOWN":
             error_message = "Could not extract a valid stock symbol from your request. Please specify a company name or ticker symbol."
-            
+
             # Track error response
             error_response_message = ConversationMessage(
                 role="agent",
                 content=error_message,
                 agent_name="Workflow System",
-                structured_data={"error_type": "symbol_extraction_failed"}
+                structured_data={"error_type": "symbol_extraction_failed"},
             )
-            self.session_state['messages'].append(error_response_message.dict())
-            
+            self.session_state["messages"].append(error_response_message.model_dump())
+
             yield RunResponse(
                 run_id=self.run_id,
                 content=error_message,
-            )
+                            )
             return
 
         self.session_state["symbol"] = symbol
 
-        # Direct tool calls for data collection (much faster than individual agents)
+        # Modern sync parallel calls using asyncio.run() with TaskGroup
+        async def _fetch_parallel_data():
+            try:
+                async with asyncio.TaskGroup() as tg:
+                    income_task = tg.create_task(self.fmp_tools.get_income_statement(symbol))
+                    financials_task = tg.create_task(self.fmp_tools.get_company_financials(symbol))
+                    price_task = tg.create_task(self.fmp_tools.get_stock_price(symbol))
+                
+                # Tasks are automatically awaited when exiting context
+                return [income_task.result(), financials_task.result(), price_task.result()]
+            
+            except* Exception as eg:
+                # Handle exception groups from failed tasks
+                raise Exception(f"Error retrieving financial data: {', '.join(str(exc) for exc in eg.exceptions)}")
+
         try:
-            income_data = self.fmp_tools.get_income_statement(symbol)
-            financials_data = self.fmp_tools.get_company_financials(symbol)
-            price_data = self.fmp_tools.get_stock_price(symbol)
+            income_data, financials_data, price_data = asyncio.run(_fetch_parallel_data())
         except Exception as e:
             yield RunResponse(
                 run_id=self.run_id,
                 content=f"Error retrieving financial data for {symbol}: {str(e)}",
-            )
+                            )
             return
 
         # Generate comprehensive report using manual composition
@@ -749,7 +902,7 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
             symbol=symbol,
             income_data=income_data,
             financials_data=financials_data,
-            price_data=price_data
+            price_data=price_data,
         )
 
         # Track report generation response
@@ -759,19 +912,323 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
             agent_name="Financial Report Composer",
             structured_data={
                 "symbol": symbol,
-                "data_sources": ["income_statement", "company_financials", "stock_price"],
+                "data_sources": [
+                    "income_statement",
+                    "company_financials",
+                    "stock_price",
+                ],
                 "report_type": "comprehensive",
-                "composition_method": "manual"
-            }
+                "composition_method": "manual",
+            },
         )
-        self.session_state['messages'].append(report_message.dict())
+        self.session_state["messages"].append(report_message.model_dump())
 
         # Cache and yield final result
         self.session_state["last_symbol"] = symbol
         self.session_state["workflow_path"] = "report"
-        yield RunResponse(run_id=self.run_id, content=comprehensive_report)
+        yield RunResponse(
+            run_id=self.run_id, 
+            content=comprehensive_report,
+                    )
 
-    def _run_alone_flow(self, message: str, category: str) -> Iterator[RunResponse]:
+    async def _arun_report_flow(
+        self, message: str
+    ) -> AsyncIterator[RunResponse]:
+        """
+        Asynchronous Comprehensive Report Flow - Parallel data collection + aggregation using TaskGroup
+        
+        This flow uses modern asyncio.TaskGroup for structured concurrency and automatic
+        exception handling.
+        
+        Args:
+            message: User's original request message
+
+        Yields:
+            RunResponse: Final comprehensive report
+        """
+        # Extract symbol with conversation context
+        conversation_context = self._get_conversation_context()
+        symbol_response = await self.symbol_extraction_agent.arun(
+            f"Extract symbol from: {message}\n{conversation_context}"
+        )
+
+        # Extract symbol from Extraction object
+        if symbol_response and hasattr(symbol_response, "content") and symbol_response.content:
+            if hasattr(symbol_response.content, "symbol"):
+                # Extraction object with symbol attribute
+                symbol = symbol_response.content.symbol
+            else:
+                # String content
+                symbol = symbol_response.content.strip()
+        else:
+            # Fallback
+            symbol = "UNKNOWN"
+
+        # Track symbol extraction response
+        symbol_message = ConversationMessage(
+            role="agent",
+            content=f"Extracted symbol: {symbol}",
+            agent_name="Symbol Extraction Agent",
+            structured_data={
+                "symbol": symbol,
+                "extraction_successful": symbol != "UNKNOWN",
+            },
+        )
+        self.session_state["messages"].append(symbol_message.model_dump())
+
+        if symbol == "UNKNOWN":
+            error_message = "Could not extract a valid stock symbol from your request. Please specify a company name or ticker symbol."
+
+            # Track error response
+            error_response_message = ConversationMessage(
+                role="agent",
+                content=error_message,
+                agent_name="Workflow System",
+                structured_data={"error_type": "symbol_extraction_failed"},
+            )
+            self.session_state["messages"].append(error_response_message.model_dump())
+
+            yield RunResponse(
+                run_id=self.run_id,
+                content=error_message,
+                            )
+            return
+
+        self.session_state["symbol"] = symbol
+
+        # Modern TaskGroup for concurrent tool calls (Python 3.11+)
+        try:
+            async with asyncio.TaskGroup() as tg:
+                income_task = tg.create_task(self.fmp_tools.get_income_statement(symbol))
+                financials_task = tg.create_task(self.fmp_tools.get_company_financials(symbol))
+                price_task = tg.create_task(self.fmp_tools.get_stock_price(symbol))
+            
+            # Tasks are automatically awaited when exiting context
+            income_data = income_task.result()
+            financials_data = financials_task.result()
+            price_data = price_task.result()
+
+        except* Exception as eg:
+            # Handle exception groups from failed tasks
+            error_messages = []
+            for exc in eg.exceptions:
+                error_messages.append(str(exc))
+                yield RunResponse(
+                    run_id=self.run_id,
+                    content=f"Error retrieving financial data for {symbol}: {str(exc)}",
+                                    )
+            # Raise exception to stop execution
+            raise Exception(f"Failed to retrieve financial data: {', '.join(error_messages)}")
+
+        # Generate comprehensive report using manual composition
+        comprehensive_report = self._compose_financial_report(
+            symbol=symbol,
+            income_data=income_data,
+            financials_data=financials_data,
+            price_data=price_data,
+        )
+
+        # Track report generation response
+        report_message = ConversationMessage(
+            role="agent",
+            content=comprehensive_report,
+            agent_name="Financial Report Composer",
+            structured_data={
+                "symbol": symbol,
+                "data_sources": [
+                    "income_statement",
+                    "company_financials",
+                    "stock_price",
+                ],
+                "report_type": "comprehensive",
+                "composition_method": "manual",
+            },
+        )
+        self.session_state["messages"].append(report_message.model_dump())
+
+        # Cache and yield final result
+        self.session_state["last_symbol"] = symbol
+        self.session_state["workflow_path"] = "report"
+        yield RunResponse(
+            run_id=self.run_id, 
+            content=comprehensive_report,
+                    )
+
+    async def _arun_alone_flow(
+        self, message: str, category: str
+    ) -> AsyncIterator[RunResponse]:
+        """
+        Asynchronous Single Information Flow - Direct path to specific data
+        
+        This flow is the async version of the single information flow.
+        
+        Args:
+            message: User's original request message
+            category: The specific data category (income_statement, company_financials, stock_price)
+
+        Yields:
+            RunResponse: Specific financial data response
+        """
+        # Extract symbol with conversation context
+        conversation_context = self._get_conversation_context()
+        symbol_response = await self.symbol_extraction_agent.arun(
+            f"Extract symbol from: {message}\n{conversation_context}"
+        )
+
+        # Extract symbol from Extraction object
+        if symbol_response and hasattr(symbol_response, "content") and symbol_response.content:
+            if hasattr(symbol_response.content, "symbol"):
+                # Extraction object with symbol attribute
+                symbol = symbol_response.content.symbol
+            else:
+                # String content
+                symbol = symbol_response.content.strip()
+        else:
+            # Fallback
+            symbol = "UNKNOWN"
+
+        # Track symbol extraction response
+        symbol_message = ConversationMessage(
+            role="agent",
+            content=f"Extracted symbol: {symbol}",
+            agent_name="Symbol Extraction Agent",
+            structured_data={
+                "symbol": symbol,
+                "extraction_successful": symbol != "UNKNOWN",
+            },
+        )
+        self.session_state["messages"].append(symbol_message.model_dump())
+
+        if symbol == "UNKNOWN":
+            error_message = "Could not extract a valid stock symbol from your request. Please specify a company name or ticker symbol."
+
+            # Track error response
+            error_response_message = ConversationMessage(
+                role="agent",
+                content=error_message,
+                agent_name="Workflow System",
+                structured_data={"error_type": "symbol_extraction_failed"},
+            )
+            self.session_state["messages"].append(error_response_message.model_dump())
+
+            yield RunResponse(
+                run_id=self.run_id,
+                content=error_message,
+                            )
+            return
+
+        self.session_state["symbol"] = symbol
+
+        # Direct async tool call based on category
+        try:
+            if category == "income_statement":
+                raw_data = await self.fmp_tools.get_income_statement(symbol)
+            elif category == "company_financials":
+                raw_data = await self.fmp_tools.get_company_financials(symbol)
+            elif category == "stock_price":
+                raw_data = await self.fmp_tools.get_stock_price(symbol)
+            else:
+                yield RunResponse(
+                    run_id=self.run_id,
+                    content="Invalid category for data request. Please specify income statement, company financials, or stock price.",
+                                    )
+                return
+        except Exception as e:
+            yield RunResponse(
+                run_id=self.run_id,
+                content=f"Error retrieving {category.replace('_', ' ')} data for {symbol}: {str(e)}",
+                            )
+            return
+
+        # Format the raw data into readable markdown
+        formatted_content = self._format_financial_data(raw_data, category, symbol)
+
+        # Track financial data response
+        data_message = ConversationMessage(
+            role="agent",
+            content=formatted_content,
+            agent_name="Financial Data Agent",
+            structured_data={
+                "symbol": symbol,
+                "data_type": category,
+                "data_source": "Financial Modeling Prep",
+                "raw_data": raw_data if isinstance(raw_data, dict) else None,
+            },
+        )
+        self.session_state["messages"].append(data_message.model_dump())
+
+        # Cache and yield result
+        self.session_state["last_symbol"] = symbol
+        self.session_state["workflow_path"] = "alone"
+        self.session_state["data_category"] = category
+        yield RunResponse(
+            run_id=self.run_id, 
+            content=formatted_content,
+                    )
+
+    async def _arun_chat_flow(
+        self, message: str
+    ) -> AsyncIterator[RunResponse]:
+        """
+        Asynchronous Chat Flow - Direct conversational response
+        
+        This flow handles general financial questions, educational content,
+        and conversational interactions that don't require data fetching.
+        
+        Args:
+            message: User's conversational message
+
+        Yields:
+            RunResponse: Conversational response from chat agent
+        """
+        self.session_state["workflow_path"] = "chat"
+
+        # Get conversation context for chat agent
+        conversation_context = self._get_conversation_context()
+
+        # Run chat agent with context
+        response = await self.chat_agent.arun(
+            f"{message}\n\nContext:\n{conversation_context}"
+        )
+
+        # Extract content from ChatResponse object
+        if hasattr(response, "content") and response.content:
+            if hasattr(response.content, "content"):
+                # ChatResponse object with content attribute
+                response_content = response.content.content
+                final_content = response_content
+            else:
+                # String content
+                response_content = response.content
+                final_content = response_content
+        else:
+            # Fallback to string representation
+            response_content = str(response)
+            final_content = response_content
+
+        # Track chat agent response
+        chat_message = ConversationMessage(
+            role="agent",
+            content=response_content,
+            agent_name="Chat Agent",
+            structured_data={
+                "response_type": "conversational",
+                "context_used": True,
+                "structured_response": response.__dict__
+                if hasattr(response, "__dict__")
+                else None,
+            },
+        )
+        self.session_state["messages"].append(chat_message.model_dump())
+
+        yield RunResponse(
+            run_id=self.run_id, 
+            content=final_content,
+                    )
+
+    def _run_alone_flow(
+        self, message: str, category: str
+    ) -> Iterator[RunResponse]:
         """
         Single Information Flow - Direct path to specific data
 
@@ -787,63 +1244,74 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
         """
 
         # Extract symbol with conversation context
-        conversation_context = self.get_conversation_context()
+        conversation_context = self._get_conversation_context()
         symbol_response = self.symbol_extraction_agent.run(
             f"Extract symbol from: {message}\n{conversation_context}"
         )
-        symbol_content = (
-            symbol_response.content if symbol_response.content else "UNKNOWN"
-        )
-        symbol = symbol_content.strip()
+
+        # Extract symbol from Extraction object
+        if symbol_response and hasattr(symbol_response, "content") and symbol_response.content:
+            if hasattr(symbol_response.content, "symbol"):
+                # Extraction object with symbol attribute
+                symbol = symbol_response.content.symbol
+            else:
+                # String content
+                symbol = symbol_response.content.strip()
+        else:
+            # Fallback
+            symbol = "UNKNOWN"
 
         # Track symbol extraction response
         symbol_message = ConversationMessage(
             role="agent",
             content=f"Extracted symbol: {symbol}",
             agent_name="Symbol Extraction Agent",
-            structured_data={"symbol": symbol, "extraction_successful": symbol != "UNKNOWN"}
+            structured_data={
+                "symbol": symbol,
+                "extraction_successful": symbol != "UNKNOWN",
+            },
         )
-        self.session_state['messages'].append(symbol_message.dict())
+        self.session_state["messages"].append(symbol_message.model_dump())
 
         if symbol == "UNKNOWN":
             error_message = "Could not extract a valid stock symbol from your request. Please specify a company name or ticker symbol."
-            
+
             # Track error response
             error_response_message = ConversationMessage(
                 role="agent",
                 content=error_message,
                 agent_name="Workflow System",
-                structured_data={"error_type": "symbol_extraction_failed"}
+                structured_data={"error_type": "symbol_extraction_failed"},
             )
-            self.session_state['messages'].append(error_response_message.dict())
-            
+            self.session_state["messages"].append(error_response_message.model_dump())
+
             yield RunResponse(
                 run_id=self.run_id,
                 content=error_message,
-            )
+                            )
             return
 
         self.session_state["symbol"] = symbol
 
-        # Direct tool call based on category (much faster than agent)
+        # Direct sync tool call based on category using asyncio.run()
         try:
             if category == "income_statement":
-                raw_data = self.fmp_tools.get_income_statement(symbol)
+                raw_data = asyncio.run(self.fmp_tools.get_income_statement(symbol))
             elif category == "company_financials":
-                raw_data = self.fmp_tools.get_company_financials(symbol)
+                raw_data = asyncio.run(self.fmp_tools.get_company_financials(symbol))
             elif category == "stock_price":
-                raw_data = self.fmp_tools.get_stock_price(symbol)
+                raw_data = asyncio.run(self.fmp_tools.get_stock_price(symbol))
             else:
                 yield RunResponse(
                     run_id=self.run_id,
                     content="Invalid category for data request. Please specify income statement, company financials, or stock price.",
-                )
+                                    )
                 return
         except Exception as e:
             yield RunResponse(
                 run_id=self.run_id,
                 content=f"Error retrieving {category.replace('_', ' ')} data for {symbol}: {str(e)}",
-            )
+                            )
             return
 
         # Format the raw data into readable markdown
@@ -858,20 +1326,25 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
                 "symbol": symbol,
                 "data_type": category,
                 "data_source": "Financial Modeling Prep",
-                "raw_data": raw_data if isinstance(raw_data, dict) else None
-            }
+                "raw_data": raw_data if isinstance(raw_data, dict) else None,
+            },
         )
-        self.session_state['messages'].append(data_message.dict())
+        self.session_state["messages"].append(data_message.model_dump())
 
         # Cache and yield result
         self.session_state["last_symbol"] = symbol
         self.session_state["workflow_path"] = "alone"
         self.session_state["data_category"] = category
-        yield RunResponse(run_id=self.run_id, content=formatted_content)
+        yield RunResponse(
+            run_id=self.run_id, 
+            content=formatted_content,
+                    )
 
-    def _run_chat_flow(self, message: str) -> Iterator[RunResponse]:
+    def _run_chat_flow(
+        self, message: str
+    ) -> Iterator[RunResponse]:
         """
-        Chat Flow - Direct conversational response
+        Chat Flow - Direct conversational response (sync version)
 
         This flow handles general financial questions, educational content,
         and conversational interactions that don't require data fetching.
@@ -883,15 +1356,31 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
             RunResponse: Conversational response from chat agent
         """
         self.session_state["workflow_path"] = "chat"
-        
+
         # Get conversation context for chat agent
         conversation_context = self._get_conversation_context()
-        
-        # Run chat agent with context
-        response = self.chat_agent.run(f"{message}\n\nContext:\n{conversation_context}")
-        
+
+        # Run chat agent with context (sync version)
+        response = self.chat_agent.run(
+            f"{message}\n\nContext:\n{conversation_context}"
+        )
+
+        # Extract content from ChatResponse object
+        if response and hasattr(response, "content") and response.content:
+            if hasattr(response.content, "content"):
+                # ChatResponse object with content attribute
+                response_content = response.content.content
+                final_content = response_content
+            else:
+                # String content
+                response_content = response.content
+                final_content = response_content
+        else:
+            # Fallback to string representation
+            response_content = str(response) if response else "No response generated"
+            final_content = response_content
+
         # Track chat agent response
-        response_content = response.content if hasattr(response, 'content') and response.content else str(response)
         chat_message = ConversationMessage(
             role="agent",
             content=response_content,
@@ -899,27 +1388,102 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
             structured_data={
                 "response_type": "conversational",
                 "context_used": True,
-                "structured_response": response.__dict__ if hasattr(response, '__dict__') else None
-            }
+                "structured_response": response.__dict__
+                if hasattr(response, "__dict__")
+                else None,
+            },
         )
-        self.session_state['messages'].append(chat_message.dict())
-        
-        yield RunResponse(run_id=self.run_id, content=response.content if hasattr(response, 'content') else str(response))
+        self.session_state["messages"].append(chat_message.model_dump())
+
+        yield RunResponse(
+            run_id=self.run_id, 
+            content=final_content,
+                    )
+
+
+    def _clean_session_state_for_storage(self):
+        """
+        Clean session state by removing non-JSON-serializable objects
+
+        This method removes Timer objects, converts datetime objects to strings,
+        and ensures all session data can be serialized to JSON for SQLite storage.
+        """
+        if not self.session_state:
+            return
+
+        # Create a cleaned version of session_state
+        cleaned_state = {}
+
+        for key, value in self.session_state.items():
+            try:
+                # Skip Timer objects and other non-serializable objects
+                if hasattr(value, "__class__") and "Timer" in str(value.__class__):
+                    continue
+
+                # Convert datetime objects to strings
+                if isinstance(value, datetime):
+                    cleaned_state[key] = value.isoformat()
+                # Handle lists and dicts recursively
+                elif isinstance(value, list):
+                    cleaned_state[key] = self._clean_list_for_storage(value)
+                elif isinstance(value, dict):
+                    cleaned_state[key] = self._clean_dict_for_storage(value)
+                else:
+                    # For other types, try to serialize to ensure it's JSON compatible
+                    import json
+
+                    json.dumps(value)  # This will raise if not serializable
+                    cleaned_state[key] = value
+            except (TypeError, ValueError):
+                # Skip non-serializable objects
+                continue
+
+        # Update session_state with cleaned version
+        self.session_state = cleaned_state
+
+    def _clean_dict_for_storage(self, data: dict) -> dict:
+        """Clean dictionary for JSON storage"""
+        cleaned_dict = {}
+        for key, value in data.items():
+            try:
+                if hasattr(value, "__class__") and "Timer" in str(value.__class__):
+                    continue
+                elif isinstance(value, datetime):
+                    cleaned_dict[key] = value.isoformat()
+                elif isinstance(value, list):
+                    cleaned_dict[key] = self._clean_list_for_storage(value)
+                elif isinstance(value, dict):
+                    cleaned_dict[key] = self._clean_dict_for_storage(value)
+                else:
+                    import json
+
+                    json.dumps(value)
+                    cleaned_dict[key] = value
+            except (TypeError, ValueError):
+                continue
+        return cleaned_dict
+
+    def _clean_list_for_storage(self, data: list) -> list:
+        """Clean list for JSON storage"""
+        cleaned_list = []
+        for item in data:
+            try:
+                if hasattr(item, "__class__") and "Timer" in str(item.__class__):
+                    continue
+                elif isinstance(item, datetime):
+                    cleaned_list.append(item.isoformat())
+                elif isinstance(item, dict):
+                    cleaned_list.append(self._clean_dict_for_storage(item))
+                elif isinstance(item, list):
+                    cleaned_list.append(self._clean_list_for_storage(item))
+                else:
+                    import json
+
+                    json.dumps(item)
+                    cleaned_list.append(item)
+            except (TypeError, ValueError):
+                continue
+        return cleaned_list
 
 
 # Convenience function for easy workflow instantiation
-def create_financial_assistant_workflow(
-    llm=None, settings: Optional[Settings] = None, session_id: Optional[str] = None
-) -> FinancialAssistantWorkflow:
-    """
-    Create and return a configured FinancialAssistantWorkflow instance.
-
-    Args:
-        llm: Optional language model to use. Defaults to Claude Sonnet 4.
-        settings: Optional settings instance. If not provided, creates new Settings.
-        session_id: Optional composite session ID for user isolation.
-
-    Returns:
-        FinancialAssistantWorkflow: Configured workflow instance
-    """
-    return FinancialAssistantWorkflow(llm=llm, settings=settings, session_id=session_id)

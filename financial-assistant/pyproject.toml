@@ -3,9 +3,10 @@ name = "financial-assistant"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "agno>=1.7.1",
+    "aiohttp>=3.12.13",
     "anthropic>=0.55.0",
     "groq>=0.28.0",
     "openai>=1.91.0",
@@ -19,7 +20,8 @@ dependencies = [
 [dependency-groups]
 dev = [
     "ipykernel>=6.29.5",
-    "pyright>=1.1.402",
+    "pyright>=1.1.403",
     "pytest>=8.4.1",
     "pytest-mock>=3.14.1",
+    "ruff>=0.12.3",
 ]

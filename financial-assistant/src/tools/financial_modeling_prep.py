@@ -5,11 +5,12 @@ This module implements the FinancialModelingPrepTools class that provides
 integration with the Financial Modeling Prep API for fetching financial data.
 """
 
+import asyncio
 import json
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Union
 
-import requests
+import aiohttp
 from agno.tools.toolkit import Toolkit
 from config.settings import Settings
 from models.schemas import (
@@ -59,11 +60,11 @@ class FinancialModelingPrepTools(Toolkit):
                 "or provide api_key parameter, or enter it in the UI."
             )
 
-    def _make_request(
+    async def _make_request(
         self, endpoint: str, params: Optional[Dict] = None
     ) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
         """
-        Make HTTP request to Financial Modeling Prep API
+        Make async HTTP request to Financial Modeling Prep API
 
         Args:
             endpoint: API endpoint (without base URL)
@@ -81,16 +82,21 @@ class FinancialModelingPrepTools(Toolkit):
         params["apikey"] = self.api_key
         url = f"{self.base_url}/{endpoint}"
 
+        timeout = aiohttp.ClientTimeout(total=self.timeout)
+        
         try:
-            response = requests.get(url, params=params, timeout=self.timeout)
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.RequestException as e:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url, params=params) as response:
+                    response.raise_for_status()
+                    return await response.json()
+        except aiohttp.ClientError as e:
             raise Exception(f"Financial Modeling Prep API request failed: {str(e)}")
         except json.JSONDecodeError as e:
             raise Exception(f"Failed to parse API response: {str(e)}")
+        except asyncio.TimeoutError as e:
+            raise Exception(f"Request timeout after {self.timeout} seconds: {str(e)}")
 
-    def search_symbol(self, query: str) -> SymbolSearchResult:
+    async def search_symbol(self, query: str) -> SymbolSearchResult:
         """
         Search for stock symbols by company name or partial ticker
 
@@ -105,7 +111,7 @@ class FinancialModelingPrepTools(Toolkit):
             if len(query) <= 5 and query.isalpha():
                 symbol = query.upper()
                 # Validate symbol exists by fetching basic profile
-                profile_data = self._make_request(f"profile/{symbol}")
+                profile_data = await self._make_request(f"profile/{symbol}")
                 if (
                     profile_data
                     and isinstance(profile_data, list)
@@ -121,7 +127,7 @@ class FinancialModelingPrepTools(Toolkit):
                     )
 
             # Search by company name
-            search_data = self._make_request("search", {"query": query, "limit": 5})
+            search_data = await self._make_request("search", {"query": query, "limit": 5})
 
             if search_data and isinstance(search_data, list) and len(search_data) > 0:
                 # Return the first (most relevant) result
@@ -150,7 +156,7 @@ class FinancialModelingPrepTools(Toolkit):
                 error=str(e)
             )
 
-    def get_income_statement(
+    async def get_income_statement(
         self, symbol: str, period: str = "annual", limit: int = 1
     ) -> IncomeStatementData:
         """
@@ -169,7 +175,7 @@ class FinancialModelingPrepTools(Toolkit):
             endpoint = f"income-statement/{symbol}"
             params = {"period": period, "limit": limit}
 
-            data = self._make_request(endpoint, params)
+            data = await self._make_request(endpoint, params)
 
             if not data or not isinstance(data, list) or len(data) == 0:
                 return IncomeStatementData(
@@ -235,7 +241,7 @@ class FinancialModelingPrepTools(Toolkit):
                 success=False
             )
 
-    def get_company_financials(self, symbol: str) -> CompanyFinancialsData:
+    async def get_company_financials(self, symbol: str) -> CompanyFinancialsData:
         """
         Get comprehensive company financial metrics and ratios
 
@@ -248,14 +254,21 @@ class FinancialModelingPrepTools(Toolkit):
         try:
             symbol = symbol.upper()
 
-            # Get key financial metrics
-            metrics_data = self._make_request(f"key-metrics/{symbol}", {"limit": 1})
-
-            # Get financial ratios
-            ratios_data = self._make_request(f"ratios/{symbol}", {"limit": 1})
-
-            # Get company profile for basic info
-            profile_data = self._make_request(f"profile/{symbol}")
+            # Get key financial metrics, ratios, and profile concurrently
+            metrics_data, ratios_data, profile_data = await asyncio.gather(
+                self._make_request(f"key-metrics/{symbol}", {"limit": 1}),
+                self._make_request(f"ratios/{symbol}", {"limit": 1}),
+                self._make_request(f"profile/{symbol}"),
+                return_exceptions=True
+            )
+            
+            # Handle exceptions from gather
+            if isinstance(metrics_data, Exception):
+                metrics_data = []
+            if isinstance(ratios_data, Exception):
+                ratios_data = []
+            if isinstance(profile_data, Exception):
+                profile_data = []
 
             if (
                 not metrics_data
@@ -348,7 +361,7 @@ class FinancialModelingPrepTools(Toolkit):
                 success=False
             )
 
-    def get_stock_price(self, symbol: str) -> StockPriceData:
+    async def get_stock_price(self, symbol: str) -> StockPriceData:
         """
         Get current stock price and trading information
 
@@ -362,7 +375,7 @@ class FinancialModelingPrepTools(Toolkit):
             symbol = symbol.upper()
 
             # Get real-time quote
-            quote_data = self._make_request(f"quote/{symbol}")
+            quote_data = await self._make_request(f"quote/{symbol}")
 
             # Get historical price for trend analysis (last 5 days)
             # historical_data = self._make_request(
@@ -453,7 +466,7 @@ class FinancialModelingPrepTools(Toolkit):
                 success=False
             )
 
-    def get_company_profile(self, symbol: str) -> CompanyProfileData:
+    async def get_company_profile(self, symbol: str) -> CompanyProfileData:
         """
         Get basic company profile information
 
@@ -465,7 +478,7 @@ class FinancialModelingPrepTools(Toolkit):
         """
         try:
             symbol = symbol.upper()
-            profile_data = self._make_request(f"profile/{symbol}")
+            profile_data = await self._make_request(f"profile/{symbol}")
 
             if (
                 not profile_data

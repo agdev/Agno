@@ -290,7 +290,7 @@ class ConversationMessage(BaseModel):
     role: Literal["user", "agent"]
     content: str
     agent_name: Optional[str] = None
-    timestamp: datetime = Field(default_factory=datetime.now)
+    timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())
     structured_data: Optional[Dict[str, Any]] = None  # For agent response data
 
 
@@ -299,7 +299,7 @@ class WorkflowSummary(BaseModel):
     summary: str = Field(..., description="Main conversation summary")
     key_topics: List[str] = Field(default_factory=list, description="Key discussion topics")
     companies_mentioned: List[str] = Field(default_factory=list, description="Companies discussed")
-    last_updated: datetime = Field(default_factory=datetime.now)
+    last_updated: str = Field(default_factory=lambda: datetime.now().isoformat())
     message_count_at_generation: int = Field(0, description="Message count when summary was generated")
 
 

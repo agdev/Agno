@@ -33,6 +33,7 @@ This project is a **fully functional** financial assistant application that has 
 ## Technology Stack
 
 ### Framework & Infrastructure
+
 - **Primary Framework**: [Agno](https://agno.ai) v1.7.1+ - Modern AI agent framework
 - **Web Interface**: Streamlit 1.46.0+ for interactive user interface
 - **Project Management**: uv for Python package and environment management
@@ -40,18 +41,21 @@ This project is a **fully functional** financial assistant application that has 
 - **Type Checking**: Pyright for static type analysis
 
 ### AI & Language Models
+
 - **Multi-Provider Support**: OpenAI (GPT), Anthropic (Claude), Groq (Llama)
 - **Primary Model**: Claude Sonnet 4 (claude-sonnet-4-20250514) for main workflow operations
 - **Structured Output**: Built-in Agno structured output capabilities with Pydantic models
 - **Memory Management**: Native Agno memory and SQLite storage systems
 
 ### Data Sources & APIs
+
 - **Financial Data**: Financial Modeling Prep API
 - **API Management**: Environment-based configuration with secure API key handling
 - **Data Processing**: Pydantic 2.11.7+ models for type safety and validation
 
 ### Development Tools
-- **Environment**: Python 3.11+ with uv virtual environment management
+
+- **Environment**: Python 3.12+ with uv virtual environment management
 - **Code Quality**: Type hints, comprehensive docstrings, structured error handling
 - **Security**: Secure API key handling, input validation, no global variables
 - **Performance**: Memory-efficient patterns and optimized response times
@@ -92,13 +96,16 @@ financial-assistant/
 ## Key Implementation Details
 
 ### Agno Workflow Architecture (✅ Implemented)
+
 The application uses Agno's Level 5 Agentic Workflow pattern with:
+
 - **✅ Deterministic Flow Control**: Three distinct workflow patterns with conditional routing
 - **✅ Specialized Agents**: 5 focused agents handling specific responsibilities within single workflow class
 - **✅ Session State Management**: Built-in state persistence and memory management using SQLite
 - **✅ Optimized Performance**: Direct tool calls instead of individual agents for data fetching
 
 ### Agent Responsibilities (✅ All Implemented)
+
 1. **✅ RouterAgent**: Categorizes user requests (income_statement|company_financials|stock_price|report|chat) with conversation context
 2. **✅ SymbolExtractionAgent**: Extracts stock symbols from natural language using FMP tools and conversation context
 3. **✅ Direct Tool Calls**: Optimized data retrieval using direct FinancialModelingPrepTools calls (performance optimization)
@@ -106,6 +113,7 @@ The application uses Agno's Level 5 Agentic Workflow pattern with:
 5. **✅ ChatAgent**: Handles conversational interactions and financial education with context awareness
 
 ### Performance Achievements vs Original LangGraph Implementation
+
 - **✅ Response Time**: 40-60% improvement through direct tool calls and optimized workflow
 - **✅ Memory Usage**: 95%+ reduction (from ~50-100MB to ~5-10MB for typical operations)
 - **✅ Architecture Simplicity**: Single workflow class vs 13 separate nodes
@@ -114,6 +122,7 @@ The application uses Agno's Level 5 Agentic Workflow pattern with:
 ## Environment Configuration
 
 ### Required Environment Variables
+
 ```bash
 # Required API Keys
 ANTHROPIC_API_KEY=your_anthropic_key_here
@@ -130,6 +139,7 @@ STREAMLIT_PORT=8501
 ```
 
 ### Environment Setup (Using uv)
+
 ```bash
 # Clone and setup
 cd financial-assistant
@@ -150,6 +160,7 @@ uv run pyright
 ## Current Implementation Status
 
 ### ✅ Completed Features
+
 - **Core Workflow**: Complete FinancialAssistantWorkflow with all three flow patterns
 - **Financial Tools**: Full FinancialModelingPrepTools with all data retrieval methods
 - **UI Interface**: Complete Streamlit application with session management
@@ -162,7 +173,8 @@ uv run pyright
 - **API Security**: Secure API key handling with no global variables
 
 ### 🔧 Current Configuration
-- **Python Version**: 3.11+
+
+- **Python Version**: 3.12+
 - **Agno Version**: 1.7.1+
 - **Primary LLM**: Claude Sonnet 4 (claude-sonnet-4-20250514)
 - **Storage**: SQLite database in `tmp/financial_assistant_sessions.db`
@@ -172,23 +184,28 @@ uv run pyright
 ## Application Usage
 
 ### Starting the Application
+
 ```bash
 # Ensure environment variables are set in env/.env
 uv run streamlit run src/main.py
 ```
 
 ### Example Queries (All Working)
+
 **Specific Data Requests:**
+
 - "What is Apple's stock price?" → Stock price data with current trading info
 - "Show Tesla's income statement" → Detailed income statement with financial metrics
 - "Get Microsoft's financial ratios" → Company financials with key ratios
 
 **Comprehensive Reports:**
+
 - "Tell me about Apple's business" → Complete financial report with all data types
 - "Analyze Amazon's financials" → Comprehensive business analysis
 - "Generate a report on Google" → Multi-section markdown report
 
 **Conversational Queries:**
+
 - "What is a P/E ratio?" → Educational explanation
 - "Explain revenue vs profit" → Financial concept explanation
 - "How do I analyze stocks?" → Investment guidance
@@ -196,6 +213,7 @@ uv run streamlit run src/main.py
 ## Development Workflow
 
 ### Key Development Commands
+
 - `uv run streamlit run src/main.py`: Start the application
 - `uv run pytest`: Run test suite
 - `uv run pyright`: Type checking (as specified in CLAUDE.md instructions)
@@ -203,6 +221,7 @@ uv run streamlit run src/main.py
 - `uv add <package>`: Add new dependency
 
 ### Code Quality Standards (All Enforced)
+
 - **✅ Type Hints**: Comprehensive type annotations throughout
 - **✅ No Global Variables**: Strict dependency injection patterns
 - **✅ Error Handling**: Graceful degradation and user-friendly error messages
@@ -213,6 +232,7 @@ uv run streamlit run src/main.py
 ## Migration Success Metrics
 
 ### ✅ Achieved Goals
+
 1. **Feature Parity**: 100% - All original LangGraph functionality preserved
 2. **Performance**: 40-60% improvement in response times
 3. **Memory Usage**: 95%+ reduction in memory footprint
@@ -221,6 +241,7 @@ uv run streamlit run src/main.py
 6. **Security**: Proper API key management without global variables
 
 ### ✅ Technical Achievements
+
 - **Workflow Patterns**: All three flow patterns implemented and optimized
 - **Agent Integration**: 5 specialized agents working cohesively
 - **Data Integration**: Complete Financial Modeling Prep API integration
@@ -230,9 +251,9 @@ uv run streamlit run src/main.py
 
 ## Project Management
 
-- **Development Language**: Python 3.11
+- **Development Language**: Python 3.12
 - **Dependency Management**: uv
-- **Primary Framework**: Agno (https://docs.agno.com/introduction)
+- **Primary Framework**: Agno (<https://docs.agno.com/introduction>)
 - **Original Implementation**: Successfully migrated from `/home/yoda/Library/Projects/Portfolio/Langgraph/FinancialAssistant/`
 - **Status**: Production-ready implementation with all core features operational
 

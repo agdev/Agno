@@ -1,0 +1,55 @@
+Exception ignored in: <function SyncHttpxClientWrapper.__del__ at 0x764ddbad3880>
+Traceback (most recent call last):
+  File "/mnt/3b92ea25-2e45-41c8-97d3-58aa8141755e/Videos/Projects/Portfolio/Agno/financial-assistant/.venv/lib/python3.11/site-packages/groq/_base_client.py", line 799, in __del__
+    if self.is_closed:
+       ^^^^^^^^^^^^^^
+  File "/mnt/3b92ea25-2e45-41c8-97d3-58aa8141755e/Videos/Projects/Portfolio/Agno/financial-assistant/.venv/lib/python3.11/site-packages/httpx/_client.py", line 228, in is_closed
+    return self._state == ClientState.CLOSED
+           ^^^^^^^^^^^
+AttributeError: 'SyncHttpxClientWrapper' object has no attribute '_state'
+Exception ignored in: <function SyncHttpxClientWrapper.__del__ at 0x764ddbad3880>
+Traceback (most recent call last):
+  File "/mnt/3b92ea25-2e45-41c8-97d3-58aa8141755e/Videos/Projects/Portfolio/Agno/financial-assistant/.venv/lib/python3.11/site-packages/groq/_base_client.py", line 799, in __del__
+    if self.is_closed:
+       ^^^^^^^^^^^^^^
+  File "/mnt/3b92ea25-2e45-41c8-97d3-58aa8141755e/Videos/Projects/Portfolio/Agno/financial-assistant/.venv/lib/python3.11/site-packages/httpx/_client.py", line 228, in is_closed
+    return self._state == ClientState.CLOSED
+           ^^^^^^^^^^^
+AttributeError: 'SyncHttpxClientWrapper' object has no attribute '_state'
+Exception ignored in: <function SyncHttpxClientWrapper.__del__ at 0x764ddbad3880>
+Traceback (most recent call last):
+  File "/mnt/3b92ea25-2e45-41c8-97d3-58aa8141755e/Videos/Projects/Portfolio/Agno/financial-assistant/.venv/lib/python3.11/site-packages/groq/_base_client.py", line 799, in __del__
+    if self.is_closed:
+       ^^^^^^^^^^^^^^
+  File "/mnt/3b92ea25-2e45-41c8-97d3-58aa8141755e/Videos/Projects/Portfolio/Agno/financial-assistant/.venv/lib/python3.11/site-packages/httpx/_client.py", line 228, in is_closed
+    return self._state == ClientState.CLOSED
+           ^^^^^^^^^^^
+AttributeError: 'SyncHttpxClientWrapper' object has no attribute '_state'
+Exception ignored in: <function SyncHttpxClientWrapper.__del__ at 0x764ddbad3880>
+Traceback (most recent call last):
+  File "/mnt/3b92ea25-2e45-41c8-97d3-58aa8141755e/Videos/Projects/Portfolio/Agno/financial-assistant/.venv/lib/python3.11/site-packages/groq/_base_client.py", line 799, in __del__
+    if self.is_closed:
+       ^^^^^^^^^^^^^^
+  File "/mnt/3b92ea25-2e45-41c8-97d3-58aa8141755e/Videos/Projects/Portfolio/Agno/financial-assistant/.venv/lib/python3.11/site-packages/httpx/_client.py", line 228, in is_closed
+    return self._state == ClientState.CLOSED
+           ^^^^^^^^^^^
+AttributeError: 'SyncHttpxClientWrapper' object has no attribute '_state'
+Exception ignored in: <function SyncHttpxClientWrapper.__del__ at 0x764ddbad3880>
+Traceback (most recent call last):
+  File "/mnt/3b92ea25-2e45-41c8-97d3-58aa8141755e/Videos/Projects/Portfolio/Agno/financial-assistant/.venv/lib/python3.11/site-packages/groq/_base_client.py", line 799, in __del__
+    if self.is_closed:
+       ^^^^^^^^^^^^^^
+  File "/mnt/3b92ea25-2e45-41c8-97d3-58aa8141755e/Videos/Projects/Portfolio/Agno/financial-assistant/.venv/lib/python3.11/site-packages/httpx/_client.py", line 228, in is_closed
+    return self._state == ClientState.CLOSED
+           ^^^^^^^^^^^
+AttributeError: 'SyncHttpxClientWrapper' object has no attribute '_state'
+WARNING  Exception upserting into table: (builtins.TypeError) Object of type    
+         Timer is not JSON serializable                                         
+         [SQL: INSERT INTO agent_sessions (session_id, user_id, memory,         
+         session_data, extra_data, created_at, workflow_id, workflow_data)      
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (session_id) DO UPDATE SET 
+         user_id = ?, memory = ?, session_data = ?, extra_data = ?, updated_at =
+         ?, workflow_id = ?, workflow_data = ?]                                 
+         [parameters: [{}]]                                                     
+WARNING  A table upgrade might be required, please review these docs for more   
+         information: https://agno.link/upgrade-schema     

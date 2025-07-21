@@ -13,11 +13,11 @@ import streamlit as st
 
 # Import our workflow and models
 from agno.models.anthropic import Claude
-from agno.models.openai import OpenAIChat
 from agno.models.groq import Groq
+from agno.models.openai import OpenAIChat
 from agno.storage.sqlite import SqliteStorage
-from workflow.financial_assistant import FinancialAssistantWorkflow
 from config.settings import Settings
+from workflow.financial_assistant import FinancialAssistantWorkflow
 
 
 # Initialize settings
@@ -39,7 +39,7 @@ def initialize_session_state():
         st.session_state.workflow_state = {}
     if "api_configured" not in st.session_state:
         st.session_state.api_configured = False
-    
+
     # Session management for conversation persistence
     if "user_id" not in st.session_state:
         # Generate a persistent user ID for this browser session
@@ -62,15 +62,19 @@ def check_api_configuration(settings: Settings) -> bool:
     session_fmp = st.session_state.get("fmp_api_key")
 
     # Need at least one LLM provider and the Financial Modeling Prep API key
-    has_llm_provider = any([
-        settings.anthropic_api_key, 
-        settings.openai_api_key, 
-        settings.groq_api_key, 
-        session_anthropic, 
-        session_openai, 
-        session_groq
-    ])
-    has_fmp_key = settings.financial_modeling_prep_api_key is not None or session_fmp is not None
+    has_llm_provider = any(
+        [
+            settings.anthropic_api_key,
+            settings.openai_api_key,
+            settings.groq_api_key,
+            session_anthropic,
+            session_openai,
+            session_groq,
+        ]
+    )
+    has_fmp_key = (
+        settings.financial_modeling_prep_api_key is not None or session_fmp is not None
+    )
 
     return has_llm_provider and has_fmp_key
 
@@ -84,9 +88,10 @@ def get_api_key(provider: str, settings: Settings) -> Optional[str]:
         return settings.openai_api_key
     elif provider == "groq" and settings.groq_api_key:
         return settings.groq_api_key
-    
+
     # Fall back to session state
     return st.session_state.get(f"{provider.lower()}_api_key")
+
 
 def get_fmp_api_key(settings: Settings) -> Optional[str]:
     """Get Financial Modeling Prep API key from settings or session state"""
@@ -100,15 +105,16 @@ def initialize_storage(settings: Settings) -> SqliteStorage:
     if st.session_state.storage is None:
         # Ensure the tmp directory exists
         import os
+
         os.makedirs(os.path.dirname(settings.storage_db_file), exist_ok=True)
-        
+
         storage = SqliteStorage(
-            table_name=settings.storage_table_name,
-            db_file=settings.storage_db_file
+            table_name=settings.storage_table_name, db_file=settings.storage_db_file
         )
         st.session_state.storage = storage
-    
+
     return st.session_state.storage
+
 
 def get_llm_model(provider: str, settings: Settings) -> Optional[object]:
     """Get configured LLM model based on provider preference"""
@@ -116,7 +122,9 @@ def get_llm_model(provider: str, settings: Settings) -> Optional[object]:
         if provider == "anthropic":
             api_key = get_api_key("anthropic", settings)
             if api_key:
-                model_id = settings.get_llm_model_id("anthropic") or "claude-sonnet-4-20250514"
+                model_id = (
+                    settings.get_llm_model_id("anthropic") or "claude-sonnet-4-20250514"
+                )
                 return Claude(id=model_id, api_key=api_key)
         elif provider == "openai":
             api_key = get_api_key("openai", settings)
@@ -126,7 +134,9 @@ def get_llm_model(provider: str, settings: Settings) -> Optional[object]:
         elif provider == "groq":
             api_key = get_api_key("groq", settings)
             if api_key:
-                model_id = settings.get_llm_model_id("groq") or "llama-3.3-70b-versatile"
+                model_id = (
+                    settings.get_llm_model_id("groq") or "llama-3.3-70b-versatile"
+                )
                 return Groq(id=model_id, api_key=api_key)
 
         # Default fallback - try available providers based on settings
@@ -144,7 +154,7 @@ def get_llm_model(provider: str, settings: Settings) -> Optional[object]:
                 elif fallback_provider == "groq":
                     fallback_model_id = model_id or "llama-3.3-70b-versatile"
                     return Groq(id=fallback_model_id, api_key=api_key)
-        
+
         return None
     except Exception as e:
         st.error(f"Error initializing LLM model: {str(e)}")
@@ -159,43 +169,51 @@ def setup_sidebar(settings: Settings):
 
         # API Configuration Section
         st.subheader("🔑 API Configuration")
-        
+
         # Check which keys are available from settings
         env_fmp = bool(settings.financial_modeling_prep_api_key)
         env_anthropic = bool(settings.anthropic_api_key)
         env_openai = bool(settings.openai_api_key)
         env_groq = bool(settings.groq_api_key)
-        
+
         # LLM Provider Selection (Show all supported providers) - Move this first
         st.markdown("### LLM Provider")
-        all_providers = ["anthropic", "openai", "groq"]  # Always show all supported providers
-        available_providers = settings.get_available_llm_providers()  # Providers with API keys
-        
+        all_providers = [
+            "anthropic",
+            "openai",
+            "groq",
+        ]  # Always show all supported providers
+        available_providers = (
+            settings.get_available_llm_providers()
+        )  # Providers with API keys
+
         # Show default provider if it's supported, otherwise default to first
         default_index = 0
         if settings.default_llm_provider in all_providers:
             default_index = all_providers.index(settings.default_llm_provider)
-        
+
         selected_provider = st.selectbox(
             "Choose LLM Provider",
             all_providers,  # Show all providers, not just configured ones
             index=default_index,
-            help="Select your preferred language model provider"
+            help="Select your preferred language model provider",
         )
-        
+
         # Show status for selected provider only
         selected_provider_has_key = selected_provider in available_providers
         if selected_provider_has_key:
             st.success(f"✅ **{selected_provider.title()}**: Configured and ready!")
         else:
-            st.warning(f"🔑 **{selected_provider.title()}**: API key required (enter below)")
-        
+            st.warning(
+                f"🔑 **{selected_provider.title()}**: API key required (enter below)"
+            )
+
         # Show environment status for relevant keys only
         st.markdown("### Environment Status")
         env_keys_found = []
         if env_fmp:
             env_keys_found.append("Financial Modeling Prep")
-        
+
         # Only show selected provider's environment status
         if selected_provider == "anthropic" and env_anthropic:
             env_keys_found.append("Anthropic (Claude)")
@@ -203,18 +221,18 @@ def setup_sidebar(settings: Settings):
             env_keys_found.append("OpenAI (GPT)")
         elif selected_provider == "groq" and env_groq:
             env_keys_found.append("Groq (Llama)")
-        
+
         if env_keys_found:
             st.info("✅ Keys loaded from environment:")
             for key in env_keys_found:
                 st.write(f"✓ {key}")
         else:
             st.info("🔑 Manual API key entry required")
-        
+
         # Manual API Key Input Section
         st.markdown("### Manual API Keys")
         st.markdown("*Enter keys only if not set in environment*")
-        
+
         # Financial Modeling Prep API Key (Required)
         if not env_fmp:
             fmp_key = st.text_input(
@@ -222,14 +240,14 @@ def setup_sidebar(settings: Settings):
                 type="password",
                 value=st.session_state.get("fmp_api_key", ""),
                 help="Required for financial data. Get it at financialmodelingprep.com",
-                key="fmp_key_input"
+                key="fmp_key_input",
             )
             if fmp_key:
                 st.session_state["fmp_api_key"] = fmp_key
-        
+
         # Provider-specific API key input (only for selected provider if needed)
         provider_configured = selected_provider in available_providers
-        
+
         # Selected provider API key input (only if not in environment)
         if selected_provider == "anthropic" and not env_anthropic:
             anthropic_key = st.text_input(
@@ -237,31 +255,31 @@ def setup_sidebar(settings: Settings):
                 type="password",
                 value=st.session_state.get("anthropic_api_key", ""),
                 help="Get your Claude API key from console.anthropic.com",
-                key="anthropic_key_input"
+                key="anthropic_key_input",
             )
             if anthropic_key:
                 st.session_state["anthropic_api_key"] = anthropic_key
                 provider_configured = True
-                
+
         elif selected_provider == "openai" and not env_openai:
             openai_key = st.text_input(
                 "OpenAI API Key *",
-                type="password", 
+                type="password",
                 value=st.session_state.get("openai_api_key", ""),
                 help="Get your OpenAI API key from platform.openai.com",
-                key="openai_key_input"
+                key="openai_key_input",
             )
             if openai_key:
                 st.session_state["openai_api_key"] = openai_key
                 provider_configured = True
-                
+
         elif selected_provider == "groq" and not env_groq:
             groq_key = st.text_input(
                 "Groq API Key *",
                 type="password",
                 value=st.session_state.get("groq_api_key", ""),
                 help="Get your Groq API key from console.groq.com",
-                key="groq_key_input"
+                key="groq_key_input",
             )
             if groq_key:
                 st.session_state["groq_api_key"] = groq_key
@@ -270,28 +288,39 @@ def setup_sidebar(settings: Settings):
         # Configuration Status
         api_configured = check_api_configuration(settings)
         fmp_configured = get_fmp_api_key(settings) is not None
-        
+
         if api_configured:
             st.success("✅ Configuration complete!")
             st.session_state.api_configured = True
-            
+
             # Initialize workflow if provider changed or not initialized
-            if (st.session_state.workflow is None or 
-                getattr(st.session_state, "current_provider", None) != selected_provider):
+            if (
+                st.session_state.workflow is None
+                or getattr(st.session_state, "current_provider", None)
+                != selected_provider
+            ):
                 with st.spinner(f"Initializing {selected_provider.title()}..."):
                     llm_model = get_llm_model(selected_provider, settings)
                     if llm_model:
                         # Initialize storage first
                         storage = initialize_storage(settings)
-                        
-                        # Initialize workflow with the LLM model, settings, and storage
+
+                        # Create composite session_id for user isolation
+                        composite_session_id = (
+                            f"{st.session_state.user_id}_{st.session_state.session_id}"
+                        )
+
+                        # Initialize workflow with the LLM model, settings, storage, and composite session_id
                         st.session_state.workflow = FinancialAssistantWorkflow(
-                            llm=llm_model, 
+                            llm=llm_model,
                             settings=settings,
-                            storage=storage
+                            storage=storage,
+                            session_id=composite_session_id,
                         )
                         st.session_state.current_provider = selected_provider
-                        st.session_state.settings = settings  # Store settings in session
+                        st.session_state.settings = (
+                            settings  # Store settings in session
+                        )
                         st.success(f"✅ Using {selected_provider.title()}")
                     else:
                         st.error(f"❌ Failed to initialize {selected_provider}")
@@ -299,37 +328,37 @@ def setup_sidebar(settings: Settings):
         else:
             st.session_state.api_configured = False
             st.error("❌ Missing required API keys")
-            
+
             missing_items = []
             if not fmp_configured:
                 missing_items.append("Financial Modeling Prep API key")
             if not provider_configured:
                 missing_items.append(f"{selected_provider.title()} API key")
-            
+
             if missing_items:
                 st.write("Missing:")
                 for item in missing_items:
                     st.write(f"• {item}")
 
         st.markdown("---")
-        
+
         # Session Management
         st.subheader("💬 Session Management")
-        
+
         # Display current session info
         current_session_short = st.session_state.session_id[:8] + "..."
         st.write(f"**Current Session:** `{current_session_short}`")
-        
+
         # Session summary display
         if st.session_state.conversation_summary:
             with st.expander("📋 Conversation Summary", expanded=False):
                 st.write(st.session_state.conversation_summary)
         else:
             st.info("No conversation summary yet")
-        
+
         # Session actions
         col1, col2 = st.columns(2)
-        
+
         with col1:
             if st.button("🆕 New Session", type="secondary"):
                 # Start a new session
@@ -338,24 +367,28 @@ def setup_sidebar(settings: Settings):
                 st.session_state.conversation_summary = ""
                 st.session_state.workflow_state = {}
                 st.rerun()
-        
+
         with col2:
             if st.button("📥 Export Chat", type="secondary"):
                 if st.session_state.messages:
                     # Create markdown export
-                    export_content = f"# Financial Assistant Conversation\n"
+                    export_content = "# Financial Assistant Conversation\n"
                     export_content += f"**Session ID:** {st.session_state.session_id}\n"
-                    export_content += f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-                    
+                    export_content += (
+                        f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                    )
+
                     for msg in st.session_state.messages:
-                        role = "**User:**" if msg["role"] == "user" else "**Assistant:**"
+                        role = (
+                            "**User:**" if msg["role"] == "user" else "**Assistant:**"
+                        )
                         export_content += f"{role}\n{msg['content']}\n\n---\n\n"
-                    
+
                     st.download_button(
                         label="📄 Download Markdown",
                         data=export_content,
                         file_name=f"financial_chat_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
-                        mime="text/markdown"
+                        mime="text/markdown",
                     )
                 else:
                     st.warning("No conversation to export")
@@ -420,7 +453,7 @@ def main():
     """Main application entry point"""
     # Initialize settings
     settings = get_app_settings()
-    
+
     st.set_page_config(
         page_title=settings.app_title,
         page_icon=settings.app_icon,
