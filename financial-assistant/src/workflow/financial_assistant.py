@@ -102,7 +102,11 @@ class FinancialAssistantWorkflow(Workflow):
     def __del__(self):
         """Clean up resources when workflow is destroyed"""
         try:
-            if hasattr(self, "llm") and hasattr(self.llm, "client") and self.llm.client is not None:
+            if (
+                hasattr(self, "llm")
+                and hasattr(self.llm, "client")
+                and self.llm.client is not None
+            ):
                 if hasattr(self.llm.client, "close"):
                     try:
                         self.llm.client.close()
@@ -115,7 +119,7 @@ class FinancialAssistantWorkflow(Workflow):
         """Initialize all workflow agents with the provided LLM"""
         # Get FMP API key from settings or session state
         fmp_api_key = self.settings.financial_modeling_prep_api_key
-        
+
         # Initialize Financial Modeling Prep Tools with settings
         self.fmp_tools = FinancialModelingPrepTools(
             api_key=fmp_api_key, settings=self.settings
@@ -147,7 +151,7 @@ class FinancialAssistantWorkflow(Workflow):
             ],
             response_model=RouterResult,
         )
-        
+
         # Symbol Extraction Agent - Extracts stock symbols with conversation context
         self.symbol_extraction_agent = Agent(
             name="Symbol Extraction Agent",
@@ -263,10 +267,13 @@ class FinancialAssistantWorkflow(Workflow):
             Tuple of (income_data, financials_data, price_data)
         """
         try:
+            income_data, financials_data, price_data = asyncio.run(
+                self._fetch_parallel_financial_data(symbol)
+            )
             # Fetch data sequentially to avoid any async/parallel complexity
-            income_data = asyncio.run(self.fmp_tools.get_income_statement(symbol))
-            financials_data = asyncio.run(self.fmp_tools.get_company_financials(symbol))
-            price_data = asyncio.run(self.fmp_tools.get_stock_price(symbol))
+            # income_data = asyncio.run(self.fmp_tools.get_income_statement(symbol))
+            # financials_data = asyncio.run(self.fmp_tools.get_company_financials(symbol))
+            # price_data = asyncio.run(self.fmp_tools.get_stock_price(symbol))
 
             return [income_data, financials_data, price_data]
 
@@ -1048,9 +1055,7 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
         conversation_context = self._get_conversation_context()
 
         # Run chat agent with context - structured output pattern (sync version)
-        response = self.chat_agent.run(
-            f"{message}\n\nContext:\n{conversation_context}"
-        )
+        response = self.chat_agent.run(f"{message}\n\nContext:\n{conversation_context}")
 
         # Extract content from ChatResponse structured output
         if response and hasattr(response, "content") and response.content:

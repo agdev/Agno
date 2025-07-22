@@ -6,6 +6,7 @@ import os
 from typing import AsyncIterator, Iterator
 
 from agno.agent import Agent
+from agno.models.groq import Groq
 from agno.run.response import RunResponse
 from agno.workflow import Workflow
 
@@ -14,6 +15,8 @@ from dotenv import load_dotenv
 
 env_path = os.path.join(os.path.dirname(__file__), "..", "..", "env", ".env")
 load_dotenv(env_path)
+
+groq_key = os.getenv("GROQ_API_KEY")
 
 
 class SimpleTestWorkflow(Workflow):
@@ -27,14 +30,14 @@ class SimpleTestWorkflow(Workflow):
             name="Simple Chat Agent",
             role="Provide simple conversational responses",
             # model=Claude(id="claude-sonnet-4-20250514"),
-            model=Groq(id=model_id, api_key=api_key),
+            model=Groq(id="llama-3.3-70b-versatile", api_key=groq_key),
             instructions=[
                 "Provide simple, friendly responses to user messages",
                 "Keep responses concise and helpful",
             ],
         )
 
-    def run(self, **kwargs) -> Iterator[RunResponse]:
+    def run(self, **kwargs) -> Iterator[RunResponse]:  # pyright: ignore[reportIncompatibleMethodOverride]
         """Simple run method following Agno patterns"""
 
         message = kwargs.get("message", "hello")
@@ -45,7 +48,7 @@ class SimpleTestWorkflow(Workflow):
         # Yield proper RunResponse object
         yield RunResponse(run_id=self.run_id, content=response.content)
 
-    async def arun(self, **kwargs) -> AsyncIterator[RunResponse]:
+    async def arun(self, **kwargs) -> AsyncIterator[RunResponse]:  # pyright: ignore[reportIncompatibleMethodOverride]
         """Simple run method following Agno patterns"""
 
         message = kwargs.get("message", "hello")
