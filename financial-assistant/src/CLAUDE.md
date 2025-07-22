@@ -669,28 +669,6 @@ def test_workflow_consistency():
     assert sync_results[0].content == async_results[0].content
 ```
 
-### 3. Performance Testing
-
-```python
-import time
-import asyncio
-
-def benchmark_workflow():
-    workflow = MyWorkflow()
-    
-    # Benchmark sync
-    start = time.time()
-    list(workflow.run(message="test"))
-    sync_time = time.time() - start
-    
-    # Benchmark async
-    start = time.time()
-    asyncio.run(workflow.arun(message="test"))
-    async_time = time.time() - start
-    
-    print(f"Sync: {sync_time:.2f}s, Async: {async_time:.2f}s")
-```
-
 ## Common Pitfalls and Solutions
 
 ### 1. Mixing Sync/Async

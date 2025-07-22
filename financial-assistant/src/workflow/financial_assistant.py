@@ -7,11 +7,11 @@ the entire financial assistant application using Agno's Level 5 Agentic Workflow
 
 import asyncio
 from datetime import datetime
-from typing import Any, AsyncIterator, Iterator, Optional
+from typing import Any, Iterator, Optional
 
 from agno.agent import Agent
 from agno.models.anthropic import Claude
-from agno.run.response import RunResponse, RunResponseErrorEvent, RunResponseCompletedEvent
+from agno.run.response import RunResponse
 from agno.storage.sqlite import SqliteStorage
 from agno.workflow import Workflow
 from config.settings import Settings
@@ -99,11 +99,23 @@ class FinancialAssistantWorkflow(Workflow):
 
         self._initialize_agents()
 
+    def __del__(self):
+        """Clean up resources when workflow is destroyed"""
+        try:
+            if hasattr(self, "llm") and hasattr(self.llm, "client") and self.llm.client is not None:
+                if hasattr(self.llm.client, "close"):
+                    try:
+                        self.llm.client.close()
+                    except Exception:
+                        pass  # Ignore cleanup errors
+        except Exception:
+            pass  # Ignore all destructor errors
+
     def _initialize_agents(self):
         """Initialize all workflow agents with the provided LLM"""
-
         # Get FMP API key from settings or session state
         fmp_api_key = self.settings.financial_modeling_prep_api_key
+        
         # Initialize Financial Modeling Prep Tools with settings
         self.fmp_tools = FinancialModelingPrepTools(
             api_key=fmp_api_key, settings=self.settings
@@ -135,7 +147,7 @@ class FinancialAssistantWorkflow(Workflow):
             ],
             response_model=RouterResult,
         )
-
+        
         # Symbol Extraction Agent - Extracts stock symbols with conversation context
         self.symbol_extraction_agent = Agent(
             name="Symbol Extraction Agent",
@@ -206,6 +218,60 @@ class FinancialAssistantWorkflow(Workflow):
                 "Preserve important context for future conversations",
             ],
         )
+
+    async def _fetch_parallel_financial_data(self, symbol: str):
+        """
+        Fetch financial data in parallel using TaskGroup
+
+        Args:
+            symbol: Stock symbol to fetch data for
+
+        Returns:
+            Tuple of (income_data, financials_data, price_data)
+        """
+        try:
+            async with asyncio.TaskGroup() as tg:
+                income_task = tg.create_task(
+                    self.fmp_tools.get_income_statement(symbol)
+                )
+                financials_task = tg.create_task(
+                    self.fmp_tools.get_company_financials(symbol)
+                )
+                price_task = tg.create_task(self.fmp_tools.get_stock_price(symbol))
+
+            # Tasks are automatically awaited when exiting context
+            return [
+                income_task.result(),
+                financials_task.result(),
+                price_task.result(),
+            ]
+
+        except* Exception as eg:
+            # Handle exception groups from failed tasks
+            raise Exception(
+                f"Error retrieving financial data: {', '.join(str(exc) for exc in eg.exceptions)}"
+            )
+
+    def _fetch_financial_data_sequential(self, symbol: str):
+        """
+        Fetch financial data sequentially for sync workflow (avoids async complexity)
+
+        Args:
+            symbol: Stock symbol to fetch data for
+
+        Returns:
+            Tuple of (income_data, financials_data, price_data)
+        """
+        try:
+            # Fetch data sequentially to avoid any async/parallel complexity
+            income_data = asyncio.run(self.fmp_tools.get_income_statement(symbol))
+            financials_data = asyncio.run(self.fmp_tools.get_company_financials(symbol))
+            price_data = asyncio.run(self.fmp_tools.get_stock_price(symbol))
+
+            return [income_data, financials_data, price_data]
+
+        except Exception as e:
+            raise Exception(f"Error retrieving financial data: {str(e)}")
 
     def _get_conversation_context(self) -> str:
         """
@@ -315,7 +381,6 @@ class FinancialAssistantWorkflow(Workflow):
                 return None
 
         return self.session_state.get("conversation_summary")
-
 
     def _compose_financial_report(
         self,
@@ -657,16 +722,13 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
             RunResponse: Stream of responses from the workflow execution
         """
 
-        # Clean session state before any storage operations
-        self._clean_session_state_for_storage()
-
         # Extract and validate message
         message = kwargs.get("message", "")
         if not message:
             yield RunResponse(
-                run_id=self.run_id, 
+                run_id=self.run_id,
                 content="No message provided",
-                            )
+            )
             return
 
         # Track user input
@@ -685,10 +747,16 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
         conversation_context = self._get_conversation_context()
 
         # Step 1: Route the request with conversation context
-        category_response = self.router_agent.run(f"User request: {message}\n{conversation_context}")
+        category_response = self.router_agent.run(
+            f"User request: {message}\n{conversation_context}"
+        )
 
         # Extract category from RouterResult object
-        if category_response and hasattr(category_response, "content") and category_response.content:
+        if (
+            category_response
+            and hasattr(category_response, "content")
+            and category_response.content
+        ):
             if hasattr(category_response.content, "category"):
                 # RouterResult object
                 category = category_response.content.category
@@ -723,92 +791,10 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
         else:  # income_statement, company_financials, stock_price
             yield from self._run_alone_flow(message, category)
 
-    async def arun(self, **kwargs: Any) -> AsyncIterator[RunResponse]:  # type: ignore[override]
-        """
-        Asynchronous version of the main workflow execution implementing the three flow patterns:
-        1. Single Information Flow (alone path)
-        2. Comprehensive Report Flow (report path)
-        3. Chat Flow
+    # REMOVED: async def arun() method - Agno framework conflicts with dual sync/async methods
+    # TODO: Re-implement async support using proper Agno patterns in future iteration
 
-        Args:
-            **kwargs: Keyword arguments including 'message' for user input
-
-        Yields:
-            RunResponse: Stream of responses from the workflow execution
-        """
-
-        # Clean session state before any storage operations
-        self._clean_session_state_for_storage()
-
-        # Extract and validate message
-        message = kwargs.get("message", "")
-        if not message:
-            yield RunResponse(
-                run_id=self.run_id, 
-                content="No message provided",
-                            )
-            return
-
-        # Track user input
-        user_message = ConversationMessage(role="user", content=message)
-
-        # Ensure messages list exists
-        if "messages" not in self.session_state:
-            self.session_state["messages"] = []
-
-        self.session_state["messages"].append(user_message.model_dump())
-
-        # Update conversation summary if needed
-        self._update_conversation_summary()
-
-        # Get conversation context for agents
-        conversation_context = self._get_conversation_context()
-
-        # Step 1: Route the request with conversation context
-        category_response = await self.router_agent.arun(f"User request: {message}\n{conversation_context}")
-
-        # Extract category from RouterResult object
-        if category_response and hasattr(category_response, "content") and category_response.content:
-            if hasattr(category_response.content, "category"):
-                # RouterResult object
-                category = category_response.content.category
-                router_content = category
-            else:
-                # String content
-                router_content = category_response.content
-                category = router_content.strip().lower()
-        else:
-            # Fallback to chat
-            router_content = "chat"
-            category = "chat"
-
-        # Track router agent response
-        router_message = ConversationMessage(
-            role="agent",
-            content=router_content,
-            agent_name="Router Agent",
-            structured_data={"category": category},
-        )
-        self.session_state["messages"].append(router_message.model_dump())
-
-        # Ensure category is lowercase for comparison
-        category = category.strip().lower()
-        self.session_state["category"] = category
-
-        # Step 2: Conditional flow based on category - async methods
-        if category == "report":
-            async for response in self._arun_report_flow(message):
-                yield response
-        elif category == "chat":
-            async for response in self._arun_chat_flow(message):
-                yield response
-        else:  # income_statement, company_financials, stock_price
-            async for response in self._arun_alone_flow(message, category):
-                yield response
-
-    def _run_report_flow(
-        self, message: str
-    ) -> Iterator[RunResponse]:
+    def _run_report_flow(self, message: str) -> Iterator[RunResponse]:
         """
         Comprehensive Report Flow - Parallel data collection + aggregation
 
@@ -830,7 +816,11 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
         )
 
         # Extract symbol from Extraction object
-        if symbol_response and hasattr(symbol_response, "content") and symbol_response.content:
+        if (
+            symbol_response
+            and hasattr(symbol_response, "content")
+            and symbol_response.content
+        ):
             if hasattr(symbol_response.content, "symbol"):
                 # Extraction object with symbol attribute
                 symbol = symbol_response.content.symbol
@@ -868,33 +858,21 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
             yield RunResponse(
                 run_id=self.run_id,
                 content=error_message,
-                            )
+            )
             return
 
         self.session_state["symbol"] = symbol
 
-        # Modern sync parallel calls using asyncio.run() with TaskGroup
-        async def _fetch_parallel_data():
-            try:
-                async with asyncio.TaskGroup() as tg:
-                    income_task = tg.create_task(self.fmp_tools.get_income_statement(symbol))
-                    financials_task = tg.create_task(self.fmp_tools.get_company_financials(symbol))
-                    price_task = tg.create_task(self.fmp_tools.get_stock_price(symbol))
-                
-                # Tasks are automatically awaited when exiting context
-                return [income_task.result(), financials_task.result(), price_task.result()]
-            
-            except* Exception as eg:
-                # Handle exception groups from failed tasks
-                raise Exception(f"Error retrieving financial data: {', '.join(str(exc) for exc in eg.exceptions)}")
-
+        # Fetch financial data sequentially for sync workflow
         try:
-            income_data, financials_data, price_data = asyncio.run(_fetch_parallel_data())
+            income_data, financials_data, price_data = (
+                self._fetch_financial_data_sequential(symbol)
+            )
         except Exception as e:
             yield RunResponse(
                 run_id=self.run_id,
                 content=f"Error retrieving financial data for {symbol}: {str(e)}",
-                            )
+            )
             return
 
         # Generate comprehensive report using manual composition
@@ -927,308 +905,15 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
         self.session_state["last_symbol"] = symbol
         self.session_state["workflow_path"] = "report"
         yield RunResponse(
-            run_id=self.run_id, 
+            run_id=self.run_id,
             content=comprehensive_report,
-                    )
-
-    async def _arun_report_flow(
-        self, message: str
-    ) -> AsyncIterator[RunResponse]:
-        """
-        Asynchronous Comprehensive Report Flow - Parallel data collection + aggregation using TaskGroup
-        
-        This flow uses modern asyncio.TaskGroup for structured concurrency and automatic
-        exception handling.
-        
-        Args:
-            message: User's original request message
-
-        Yields:
-            RunResponse: Final comprehensive report
-        """
-        # Extract symbol with conversation context
-        conversation_context = self._get_conversation_context()
-        symbol_response = await self.symbol_extraction_agent.arun(
-            f"Extract symbol from: {message}\n{conversation_context}"
         )
 
-        # Extract symbol from Extraction object
-        if symbol_response and hasattr(symbol_response, "content") and symbol_response.content:
-            if hasattr(symbol_response.content, "symbol"):
-                # Extraction object with symbol attribute
-                symbol = symbol_response.content.symbol
-            else:
-                # String content
-                symbol = symbol_response.content.strip()
-        else:
-            # Fallback
-            symbol = "UNKNOWN"
+    # REMOVED: async def _arun_report_flow() - Agno framework conflicts with dual sync/async methods
+    # REMOVED: async def _arun_alone_flow() - Agno framework conflicts with dual sync/async methods
+    # REMOVED: async def _arun_chat_flow() - Agno framework conflicts with dual sync/async methods
 
-        # Track symbol extraction response
-        symbol_message = ConversationMessage(
-            role="agent",
-            content=f"Extracted symbol: {symbol}",
-            agent_name="Symbol Extraction Agent",
-            structured_data={
-                "symbol": symbol,
-                "extraction_successful": symbol != "UNKNOWN",
-            },
-        )
-        self.session_state["messages"].append(symbol_message.model_dump())
-
-        if symbol == "UNKNOWN":
-            error_message = "Could not extract a valid stock symbol from your request. Please specify a company name or ticker symbol."
-
-            # Track error response
-            error_response_message = ConversationMessage(
-                role="agent",
-                content=error_message,
-                agent_name="Workflow System",
-                structured_data={"error_type": "symbol_extraction_failed"},
-            )
-            self.session_state["messages"].append(error_response_message.model_dump())
-
-            yield RunResponse(
-                run_id=self.run_id,
-                content=error_message,
-                            )
-            return
-
-        self.session_state["symbol"] = symbol
-
-        # Modern TaskGroup for concurrent tool calls (Python 3.11+)
-        try:
-            async with asyncio.TaskGroup() as tg:
-                income_task = tg.create_task(self.fmp_tools.get_income_statement(symbol))
-                financials_task = tg.create_task(self.fmp_tools.get_company_financials(symbol))
-                price_task = tg.create_task(self.fmp_tools.get_stock_price(symbol))
-            
-            # Tasks are automatically awaited when exiting context
-            income_data = income_task.result()
-            financials_data = financials_task.result()
-            price_data = price_task.result()
-
-        except* Exception as eg:
-            # Handle exception groups from failed tasks
-            error_messages = []
-            for exc in eg.exceptions:
-                error_messages.append(str(exc))
-                yield RunResponse(
-                    run_id=self.run_id,
-                    content=f"Error retrieving financial data for {symbol}: {str(exc)}",
-                                    )
-            # Raise exception to stop execution
-            raise Exception(f"Failed to retrieve financial data: {', '.join(error_messages)}")
-
-        # Generate comprehensive report using manual composition
-        comprehensive_report = self._compose_financial_report(
-            symbol=symbol,
-            income_data=income_data,
-            financials_data=financials_data,
-            price_data=price_data,
-        )
-
-        # Track report generation response
-        report_message = ConversationMessage(
-            role="agent",
-            content=comprehensive_report,
-            agent_name="Financial Report Composer",
-            structured_data={
-                "symbol": symbol,
-                "data_sources": [
-                    "income_statement",
-                    "company_financials",
-                    "stock_price",
-                ],
-                "report_type": "comprehensive",
-                "composition_method": "manual",
-            },
-        )
-        self.session_state["messages"].append(report_message.model_dump())
-
-        # Cache and yield final result
-        self.session_state["last_symbol"] = symbol
-        self.session_state["workflow_path"] = "report"
-        yield RunResponse(
-            run_id=self.run_id, 
-            content=comprehensive_report,
-                    )
-
-    async def _arun_alone_flow(
-        self, message: str, category: str
-    ) -> AsyncIterator[RunResponse]:
-        """
-        Asynchronous Single Information Flow - Direct path to specific data
-        
-        This flow is the async version of the single information flow.
-        
-        Args:
-            message: User's original request message
-            category: The specific data category (income_statement, company_financials, stock_price)
-
-        Yields:
-            RunResponse: Specific financial data response
-        """
-        # Extract symbol with conversation context
-        conversation_context = self._get_conversation_context()
-        symbol_response = await self.symbol_extraction_agent.arun(
-            f"Extract symbol from: {message}\n{conversation_context}"
-        )
-
-        # Extract symbol from Extraction object
-        if symbol_response and hasattr(symbol_response, "content") and symbol_response.content:
-            if hasattr(symbol_response.content, "symbol"):
-                # Extraction object with symbol attribute
-                symbol = symbol_response.content.symbol
-            else:
-                # String content
-                symbol = symbol_response.content.strip()
-        else:
-            # Fallback
-            symbol = "UNKNOWN"
-
-        # Track symbol extraction response
-        symbol_message = ConversationMessage(
-            role="agent",
-            content=f"Extracted symbol: {symbol}",
-            agent_name="Symbol Extraction Agent",
-            structured_data={
-                "symbol": symbol,
-                "extraction_successful": symbol != "UNKNOWN",
-            },
-        )
-        self.session_state["messages"].append(symbol_message.model_dump())
-
-        if symbol == "UNKNOWN":
-            error_message = "Could not extract a valid stock symbol from your request. Please specify a company name or ticker symbol."
-
-            # Track error response
-            error_response_message = ConversationMessage(
-                role="agent",
-                content=error_message,
-                agent_name="Workflow System",
-                structured_data={"error_type": "symbol_extraction_failed"},
-            )
-            self.session_state["messages"].append(error_response_message.model_dump())
-
-            yield RunResponse(
-                run_id=self.run_id,
-                content=error_message,
-                            )
-            return
-
-        self.session_state["symbol"] = symbol
-
-        # Direct async tool call based on category
-        try:
-            if category == "income_statement":
-                raw_data = await self.fmp_tools.get_income_statement(symbol)
-            elif category == "company_financials":
-                raw_data = await self.fmp_tools.get_company_financials(symbol)
-            elif category == "stock_price":
-                raw_data = await self.fmp_tools.get_stock_price(symbol)
-            else:
-                yield RunResponse(
-                    run_id=self.run_id,
-                    content="Invalid category for data request. Please specify income statement, company financials, or stock price.",
-                                    )
-                return
-        except Exception as e:
-            yield RunResponse(
-                run_id=self.run_id,
-                content=f"Error retrieving {category.replace('_', ' ')} data for {symbol}: {str(e)}",
-                            )
-            return
-
-        # Format the raw data into readable markdown
-        formatted_content = self._format_financial_data(raw_data, category, symbol)
-
-        # Track financial data response
-        data_message = ConversationMessage(
-            role="agent",
-            content=formatted_content,
-            agent_name="Financial Data Agent",
-            structured_data={
-                "symbol": symbol,
-                "data_type": category,
-                "data_source": "Financial Modeling Prep",
-                "raw_data": raw_data if isinstance(raw_data, dict) else None,
-            },
-        )
-        self.session_state["messages"].append(data_message.model_dump())
-
-        # Cache and yield result
-        self.session_state["last_symbol"] = symbol
-        self.session_state["workflow_path"] = "alone"
-        self.session_state["data_category"] = category
-        yield RunResponse(
-            run_id=self.run_id, 
-            content=formatted_content,
-                    )
-
-    async def _arun_chat_flow(
-        self, message: str
-    ) -> AsyncIterator[RunResponse]:
-        """
-        Asynchronous Chat Flow - Direct conversational response
-        
-        This flow handles general financial questions, educational content,
-        and conversational interactions that don't require data fetching.
-        
-        Args:
-            message: User's conversational message
-
-        Yields:
-            RunResponse: Conversational response from chat agent
-        """
-        self.session_state["workflow_path"] = "chat"
-
-        # Get conversation context for chat agent
-        conversation_context = self._get_conversation_context()
-
-        # Run chat agent with context
-        response = await self.chat_agent.arun(
-            f"{message}\n\nContext:\n{conversation_context}"
-        )
-
-        # Extract content from ChatResponse object
-        if hasattr(response, "content") and response.content:
-            if hasattr(response.content, "content"):
-                # ChatResponse object with content attribute
-                response_content = response.content.content
-                final_content = response_content
-            else:
-                # String content
-                response_content = response.content
-                final_content = response_content
-        else:
-            # Fallback to string representation
-            response_content = str(response)
-            final_content = response_content
-
-        # Track chat agent response
-        chat_message = ConversationMessage(
-            role="agent",
-            content=response_content,
-            agent_name="Chat Agent",
-            structured_data={
-                "response_type": "conversational",
-                "context_used": True,
-                "structured_response": response.__dict__
-                if hasattr(response, "__dict__")
-                else None,
-            },
-        )
-        self.session_state["messages"].append(chat_message.model_dump())
-
-        yield RunResponse(
-            run_id=self.run_id, 
-            content=final_content,
-                    )
-
-    def _run_alone_flow(
-        self, message: str, category: str
-    ) -> Iterator[RunResponse]:
+    def _run_alone_flow(self, message: str, category: str) -> Iterator[RunResponse]:
         """
         Single Information Flow - Direct path to specific data
 
@@ -1250,7 +935,11 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
         )
 
         # Extract symbol from Extraction object
-        if symbol_response and hasattr(symbol_response, "content") and symbol_response.content:
+        if (
+            symbol_response
+            and hasattr(symbol_response, "content")
+            and symbol_response.content
+        ):
             if hasattr(symbol_response.content, "symbol"):
                 # Extraction object with symbol attribute
                 symbol = symbol_response.content.symbol
@@ -1288,7 +977,7 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
             yield RunResponse(
                 run_id=self.run_id,
                 content=error_message,
-                            )
+            )
             return
 
         self.session_state["symbol"] = symbol
@@ -1305,13 +994,13 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
                 yield RunResponse(
                     run_id=self.run_id,
                     content="Invalid category for data request. Please specify income statement, company financials, or stock price.",
-                                    )
+                )
                 return
         except Exception as e:
             yield RunResponse(
                 run_id=self.run_id,
                 content=f"Error retrieving {category.replace('_', ' ')} data for {symbol}: {str(e)}",
-                            )
+            )
             return
 
         # Format the raw data into readable markdown
@@ -1336,13 +1025,11 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
         self.session_state["workflow_path"] = "alone"
         self.session_state["data_category"] = category
         yield RunResponse(
-            run_id=self.run_id, 
+            run_id=self.run_id,
             content=formatted_content,
-                    )
+        )
 
-    def _run_chat_flow(
-        self, message: str
-    ) -> Iterator[RunResponse]:
+    def _run_chat_flow(self, message: str) -> Iterator[RunResponse]:
         """
         Chat Flow - Direct conversational response (sync version)
 
@@ -1360,46 +1047,39 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
         # Get conversation context for chat agent
         conversation_context = self._get_conversation_context()
 
-        # Run chat agent with context (sync version)
+        # Run chat agent with context - structured output pattern (sync version)
         response = self.chat_agent.run(
             f"{message}\n\nContext:\n{conversation_context}"
         )
 
-        # Extract content from ChatResponse object
+        # Extract content from ChatResponse structured output
         if response and hasattr(response, "content") and response.content:
             if hasattr(response.content, "content"):
                 # ChatResponse object with content attribute
-                response_content = response.content.content
-                final_content = response_content
+                final_content = response.content.content
             else:
                 # String content
-                response_content = response.content
-                final_content = response_content
+                final_content = str(response.content)
         else:
-            # Fallback to string representation
-            response_content = str(response) if response else "No response generated"
-            final_content = response_content
+            # Fallback
+            final_content = "No response generated"
 
-        # Track chat agent response
+        # Track chat agent response in conversation
         chat_message = ConversationMessage(
             role="agent",
-            content=response_content,
+            content=final_content,
             agent_name="Chat Agent",
             structured_data={
                 "response_type": "conversational",
                 "context_used": True,
-                "structured_response": response.__dict__
-                if hasattr(response, "__dict__")
-                else None,
+                "workflow_path": "chat",
             },
+            timestamp=datetime.now().isoformat(),
         )
         self.session_state["messages"].append(chat_message.model_dump())
 
-        yield RunResponse(
-            run_id=self.run_id, 
-            content=final_content,
-                    )
-
+        # Yield final response to user
+        yield RunResponse(run_id=self.run_id, content=final_content)
 
     def _clean_session_state_for_storage(self):
         """

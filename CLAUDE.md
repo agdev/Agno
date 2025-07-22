@@ -240,3 +240,7 @@ This project follows strict development standards documented in the `docs/rules/
 - Follow the existing code patterns and architecture decisions
 - Refer to the detailed implementation plan and task list for guidance
 - Test thoroughly against the current LangGraph implementation for feature parity
+
+## Memories and Development Notes
+
+- place your test files in @financial-assistant/src/tests/ folder

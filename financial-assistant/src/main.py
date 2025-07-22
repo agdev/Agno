@@ -438,6 +438,10 @@ def process_user_input(user_input: str) -> Generator[str, None, None]:
 
         # Process through workflow - Agno workflows return Iterator[RunResponse]
         responses = st.session_state.workflow.run(message=user_input)
+        
+        if responses is None:
+            yield "❌ DEBUG: Workflow returned None instead of iterator"
+            return
 
         for response in responses:
             if hasattr(response, "content") and response.content:
