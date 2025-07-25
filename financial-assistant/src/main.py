@@ -293,11 +293,18 @@ def setup_sidebar(settings: Settings):
             st.success("✅ Configuration complete!")
             st.session_state.api_configured = True
 
-            # Initialize workflow if provider changed or not initialized
+            # Check if streaming settings changed
+            current_stream = st.session_state.get("streaming_enabled", False)
+            current_intermediate = st.session_state.get("stream_intermediate_steps", False)
+            last_stream = getattr(st.session_state, "last_streaming_enabled", None)
+            last_intermediate = getattr(st.session_state, "last_stream_intermediate_steps", None)
+            
+            # Initialize workflow if provider changed, streaming settings changed, or not initialized
             if (
                 st.session_state.workflow is None
-                or getattr(st.session_state, "current_provider", None)
-                != selected_provider
+                or getattr(st.session_state, "current_provider", None) != selected_provider
+                or last_stream != current_stream
+                or last_intermediate != current_intermediate
             ):
                 with st.spinner(f"Initializing {selected_provider.title()}..."):
                     llm_model = get_llm_model(selected_provider, settings)
@@ -310,18 +317,25 @@ def setup_sidebar(settings: Settings):
                             f"{st.session_state.user_id}_{st.session_state.session_id}"
                         )
 
-                        # Initialize workflow with the LLM model, settings, storage, and composite session_id
+                        # Initialize workflow with the LLM model, settings, storage, composite session_id, and streaming settings
                         st.session_state.workflow = FinancialAssistantWorkflow(
                             llm=llm_model,
                             settings=settings,
                             storage=storage,
                             session_id=composite_session_id,
+                            stream=st.session_state.get("streaming_enabled", False),
+                            stream_intermediate_steps=st.session_state.get("stream_intermediate_steps", False),
                         )
                         st.session_state.current_provider = selected_provider
                         st.session_state.settings = (
                             settings  # Store settings in session
                         )
-                        st.success(f"✅ Using {selected_provider.title()}")
+                        # Track streaming settings to detect changes
+                        st.session_state.last_streaming_enabled = current_stream
+                        st.session_state.last_stream_intermediate_steps = current_intermediate
+                        
+                        streaming_status = "with streaming" if current_stream else "without streaming"
+                        st.success(f"✅ Using {selected_provider.title()} {streaming_status}")
                     else:
                         st.error(f"❌ Failed to initialize {selected_provider}")
                         st.session_state.api_configured = False
@@ -339,6 +353,29 @@ def setup_sidebar(settings: Settings):
                 st.write("Missing:")
                 for item in missing_items:
                     st.write(f"• {item}")
+
+        st.markdown("---")
+
+        # Streaming Configuration
+        st.subheader("⚡ Streaming Settings")
+        streaming_enabled = st.checkbox(
+            "Enable Response Streaming",
+            value=st.session_state.get("streaming_enabled", True),
+            help="Stream responses as they are generated for faster feedback",
+            key="streaming_toggle"
+        )
+        st.session_state.streaming_enabled = streaming_enabled
+        
+        if streaming_enabled:
+            stream_intermediate = st.checkbox(
+                "Show Intermediate Steps",
+                value=st.session_state.get("stream_intermediate_steps", False),
+                help="Display agent reasoning steps during streaming",
+                key="intermediate_toggle"
+            )
+            st.session_state.stream_intermediate_steps = stream_intermediate
+        else:
+            st.session_state.stream_intermediate_steps = False
 
         st.markdown("---")
 
@@ -511,9 +548,16 @@ def main():
                 full_response = ""
 
                 try:
+                    chunk_count = 0
                     for response_chunk in process_user_input(prompt):
-                        full_response = response_chunk  # For workflow responses, we get the complete response
+                        chunk_count += 1
+                        # For streaming, each chunk should be displayed as it arrives
+                        full_response = response_chunk  # Each chunk is the complete response so far
                         response_placeholder.markdown(full_response)
+                        
+                    # Debug: Show chunk count if streaming is enabled
+                    if st.session_state.get("streaming_enabled", True) and chunk_count > 1:
+                        st.caption(f"🔄 Streamed in {chunk_count} chunks")
                 except Exception as e:
                     error_message = f"❌ An error occurred: {str(e)}"
                     response_placeholder.error(error_message)

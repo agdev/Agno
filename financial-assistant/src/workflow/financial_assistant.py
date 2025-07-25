@@ -7,11 +7,11 @@ the entire financial assistant application using Agno's Level 5 Agentic Workflow
 
 import asyncio
 from datetime import datetime
-from typing import Any, Iterator, Optional
+from typing import Any, Iterator, Optional, cast
 
 from agno.agent import Agent
 from agno.models.anthropic import Claude
-from agno.run.response import RunResponse
+from agno.run.response import RunResponse, RunResponseEvent
 from agno.storage.sqlite import SqliteStorage
 from agno.workflow import Workflow
 from config.settings import Settings
@@ -42,6 +42,8 @@ class FinancialAssistantWorkflow(Workflow):
         settings: Optional[Settings] = None,
         storage: Optional[SqliteStorage] = None,
         session_id: Optional[str] = None,
+        stream: bool = False,
+        stream_intermediate_steps: bool = False,
     ):
         """
         Initialize the Financial Assistant Workflow
@@ -52,12 +54,18 @@ class FinancialAssistantWorkflow(Workflow):
             settings: Configuration settings. If not provided, will create new Settings instance.
             storage: Storage instance for session persistence. If not provided, will create based on settings.
             session_id: Composite session ID for user isolation (format: user_id_session_id).
+            stream: Enable streaming mode for agent responses.
+            stream_intermediate_steps: Show intermediate reasoning steps during streaming.
         """
         # Pass session_id to Workflow parent class
         super().__init__(session_id=session_id)
 
         # Initialize settings
         self.settings = settings or Settings()
+
+        # Initialize streaming parameters
+        self.stream = stream
+        self.stream_intermediate_steps = stream_intermediate_steps
 
         # Initialize session state structure for conversation management
         if not hasattr(self, "session_state") or not self.session_state:
@@ -715,6 +723,69 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
 *Last updated: {getattr(data, "timestamp", "N/A")}*
 """
 
+    def _extract_content_from_chunk(self, chunk) -> Optional[str]:
+        """
+        Extract content from streaming chunk (simplified based on Agno examples)
+
+        Args:
+            chunk: RunResponseEvent from streaming agent response
+
+        Returns:
+            str: Content to display or None if no displayable content
+        """
+        # Based on Agno examples, chunks have direct content access
+        if hasattr(chunk, "content") and chunk.content:
+            return str(chunk.content)
+
+        # If intermediate steps enabled, show what we can
+        if self.stream_intermediate_steps:
+            return f"📊 {str(chunk)}"
+
+        return None
+
+    def _run_agent_streaming(self, agent, message: str):
+        """
+        Run agent in streaming mode and yield results
+
+        Args:
+            agent: The agent to run
+            message: Message to send to agent
+
+        Yields:
+            str: Content from streaming chunks
+
+        Returns:
+            str: Final content for processing
+        """
+        response = agent.run(
+            message,
+            stream=True,
+            stream_intermediate_steps=self.stream_intermediate_steps,
+        )
+        final_content = ""
+
+        for chunk in response:  # Now pyright knows this is Iterator[RunResponseEvent]
+            content = self._extract_content_from_chunk(chunk)
+            if content:
+                final_content = content
+                if self.stream_intermediate_steps:
+                    yield content
+
+        return final_content
+
+    def _run_agent_single(self, agent, message: str):
+        """
+        Run agent in single response mode
+
+        Args:
+            agent: The agent to run
+            message: Message to send to agent
+
+        Returns:
+            RunResponse: Single response from agent
+        """
+        return agent.run(message, stream=False)  # Now pyright knows this is RunResponse
+
     def run(self, **kwargs: Any) -> Iterator[RunResponse]:  # type: ignore[override]
         """
         Main workflow execution implementing the three flow patterns:
@@ -755,27 +826,55 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
 
         # Step 1: Route the request with conversation context
         category_response = self.router_agent.run(
-            f"User request: {message}\n{conversation_context}"
+            f"User request: {message}\n{conversation_context}",
+            stream=self.stream,
+            stream_intermediate_steps=self.stream_intermediate_steps,
         )
 
-        # Extract category from RouterResult object
-        if (
-            category_response
-            and hasattr(category_response, "content")
-            and category_response.content
-        ):
-            if hasattr(category_response.content, "category"):
-                # RouterResult object
-                category = category_response.content.category
-                router_content = category
+        # Handle streaming vs non-streaming response with cast for type safety
+        if self.stream:
+            # We know stream=True returns Iterator[RunResponseEvent]
+            final_router_result = None
+            for chunk in cast(Iterator[RunResponseEvent], category_response):
+                if hasattr(chunk, 'content') and chunk.content:
+                    final_router_result = chunk.content
+                    if self.stream_intermediate_steps:
+                        yield RunResponse(run_id=self.run_id, content=str(chunk.content))
+
+            # Extract category from RouterResult object
+            if final_router_result:
+                if hasattr(final_router_result, 'category') and not isinstance(final_router_result, str):
+                    category = final_router_result.category.strip().lower()
+                    router_content = category
+                else:
+                    # If it's a string representation, extract category
+                    router_str = str(final_router_result)
+                    if "category=" in router_str:
+                        import re
+                        match = re.search(r"category='([^']+)'", router_str)
+                        category = match.group(1).strip().lower() if match else "chat"
+                        router_content = category
+                    else:
+                        router_content = router_str
+                        category = "chat"
             else:
-                # String content
-                router_content = category_response.content
-                category = router_content.strip().lower()
+                router_content = "chat"
+                category = "chat"
         else:
-            # Fallback to chat
-            router_content = "chat"
-            category = "chat"
+            # We know stream=False returns RunResponse
+            single_response = cast(RunResponse, category_response)
+            if hasattr(single_response, "content") and single_response.content:
+                if hasattr(single_response.content, "category"):
+                    # RouterResult object with category attribute
+                    category = single_response.content.category.strip().lower()
+                    router_content = category
+                else:
+                    # Fallback - shouldn't happen with structured output
+                    router_content = str(single_response.content)
+                    category = "chat"
+            else:
+                router_content = "chat"
+                category = "chat"
 
         # Track router agent response
         router_message = ConversationMessage(
@@ -819,24 +918,46 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
         # Extract symbol with conversation context
         conversation_context = self._get_conversation_context()
         symbol_response = self.symbol_extraction_agent.run(
-            f"Extract symbol from: {message}\n{conversation_context}"
+            f"Extract symbol from: {message}\n{conversation_context}",
+            stream=self.stream,
+            stream_intermediate_steps=self.stream_intermediate_steps,
         )
 
-        # Extract symbol from Extraction object
-        if (
-            symbol_response
-            and hasattr(symbol_response, "content")
-            and symbol_response.content
-        ):
-            if hasattr(symbol_response.content, "symbol"):
-                # Extraction object with symbol attribute
-                symbol = symbol_response.content.symbol
+        # Handle streaming vs non-streaming response for symbol extraction (type-safe)
+        if self.stream:
+            # Stream mode: symbol_response is Iterator[RunResponseEvent]
+            stream_response = cast(Iterator[RunResponseEvent], symbol_response)
+            final_content = ""
+            for chunk in stream_response:  # chunk is RunResponseEvent
+                content = self._extract_content_from_chunk(chunk)
+                if content:
+                    final_content = content  # Keep last meaningful content
+                    # Yield intermediate steps if enabled
+                    if self.stream_intermediate_steps:
+                        yield RunResponse(run_id=self.run_id, content=content)
+
+            # Extract symbol from final content (string)
+            if final_content:
+                symbol = str(final_content).strip()
             else:
-                # String content
-                symbol = symbol_response.content.strip()
+                symbol = "UNKNOWN"
         else:
-            # Fallback
-            symbol = "UNKNOWN"
+            # Non-streaming response handling (existing logic)
+            single_response = cast(RunResponse, symbol_response)
+            if (
+                single_response
+                and hasattr(single_response, "content")
+                and single_response.content
+            ):
+                if hasattr(single_response.content, "symbol"):
+                    # Extraction object with symbol attribute
+                    symbol = single_response.content.symbol
+                else:
+                    # String content
+                    symbol = str(single_response.content).strip()
+            else:
+                # Fallback
+                symbol = "UNKNOWN"
 
         # Track symbol extraction response
         symbol_message = ConversationMessage(
@@ -938,24 +1059,46 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
         # Extract symbol with conversation context
         conversation_context = self._get_conversation_context()
         symbol_response = self.symbol_extraction_agent.run(
-            f"Extract symbol from: {message}\n{conversation_context}"
+            f"Extract symbol from: {message}\n{conversation_context}",
+            stream=self.stream,
+            stream_intermediate_steps=self.stream_intermediate_steps,
         )
 
-        # Extract symbol from Extraction object
-        if (
-            symbol_response
-            and hasattr(symbol_response, "content")
-            and symbol_response.content
-        ):
-            if hasattr(symbol_response.content, "symbol"):
-                # Extraction object with symbol attribute
-                symbol = symbol_response.content.symbol
+        # Handle streaming vs non-streaming response for symbol extraction (type-safe)
+        if self.stream:
+            # Stream mode: symbol_response is Iterator[RunResponseEvent]
+            stream_response = cast(Iterator[RunResponseEvent], symbol_response)
+            final_content = ""
+            for chunk in stream_response:  # chunk is RunResponseEvent
+                content = self._extract_content_from_chunk(chunk)
+                if content:
+                    final_content = content  # Keep last meaningful content
+                    # Yield intermediate steps if enabled
+                    if self.stream_intermediate_steps:
+                        yield RunResponse(run_id=self.run_id, content=content)
+
+            # Extract symbol from final content (string)
+            if final_content:
+                symbol = str(final_content).strip()
             else:
-                # String content
-                symbol = symbol_response.content.strip()
+                symbol = "UNKNOWN"
         else:
-            # Fallback
-            symbol = "UNKNOWN"
+            # Non-streaming response handling (existing logic)
+            single_response = cast(RunResponse, symbol_response)
+            if (
+                single_response
+                and hasattr(single_response, "content")
+                and single_response.content
+            ):
+                if hasattr(single_response.content, "symbol"):
+                    # Extraction object with symbol attribute
+                    symbol = single_response.content.symbol
+                else:
+                    # String content
+                    symbol = str(single_response.content).strip()
+            else:
+                # Fallback
+                symbol = "UNKNOWN"
 
         # Track symbol extraction response
         symbol_message = ConversationMessage(
@@ -1000,7 +1143,7 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
             else:
                 yield RunResponse(
                     run_id=self.run_id,
-                    content="Invalid category for data request. Please specify income statement, company financials, or stock price.",
+                    content=f"Invalid category '{category}' for data request. Expected: income_statement, company_financials, or stock_price. Please try rephrasing your request.",
                 )
                 return
         except Exception as e:
@@ -1054,20 +1197,56 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
         # Get conversation context for chat agent
         conversation_context = self._get_conversation_context()
 
-        # Run chat agent with context - structured output pattern (sync version)
-        response = self.chat_agent.run(f"{message}\n\nContext:\n{conversation_context}")
+        # Run chat agent with context - with streaming support
+        response = self.chat_agent.run(
+            f"{message}\n\nContext:\n{conversation_context}",
+            stream=self.stream,
+            stream_intermediate_steps=self.stream_intermediate_steps,
+        )
 
-        # Extract content from ChatResponse structured output
-        if response and hasattr(response, "content") and response.content:
-            if hasattr(response.content, "content"):
-                # ChatResponse object with content attribute
-                final_content = response.content.content
+        # Handle streaming vs non-streaming response for chat agent (type-safe)
+        if self.stream:
+            # Stream mode: response is Iterator[RunResponseEvent]
+            stream_response = cast(Iterator[RunResponseEvent], response)
+            final_chat_result = None
+            for chunk in stream_response:  # chunk is RunResponseEvent
+                if hasattr(chunk, 'content') and chunk.content:
+                    final_chat_result = chunk.content
+                    # Extract actual content from ChatResponse for streaming
+                    if hasattr(chunk.content, 'content') and not isinstance(chunk.content, str):
+                        chunk_content = chunk.content.content
+                    else:
+                        chunk_content = str(chunk.content)
+                    
+                    # Yield streaming content
+                    yield RunResponse(run_id=self.run_id, content=chunk_content)
+
+            # Extract final content from ChatResponse object
+            if final_chat_result and hasattr(final_chat_result, 'content') and not isinstance(final_chat_result, str):
+                final_content = final_chat_result.content
             else:
-                # String content
-                final_content = str(response.content)
+                final_content = str(final_chat_result) if final_chat_result else "No response generated"
         else:
-            # Fallback
-            final_content = "No response generated"
+            # Non-streaming response handling
+            single_response = cast(RunResponse, response)
+            if (
+                single_response
+                and hasattr(single_response, "content")
+                and single_response.content
+            ):
+                if hasattr(single_response.content, "content"):
+                    # ChatResponse object with content attribute
+                    final_content = single_response.content.content
+                    # Also yield the content for non-streaming mode
+                    yield RunResponse(run_id=self.run_id, content=final_content)
+                else:
+                    # String content
+                    final_content = str(single_response.content)
+                    yield RunResponse(run_id=self.run_id, content=final_content)
+            else:
+                # Fallback
+                final_content = "No response generated"
+                yield RunResponse(run_id=self.run_id, content=final_content)
 
         # Track chat agent response in conversation
         chat_message = ConversationMessage(
@@ -1082,9 +1261,6 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
             timestamp=datetime.now().isoformat(),
         )
         self.session_state["messages"].append(chat_message.model_dump())
-
-        # Yield final response to user
-        yield RunResponse(run_id=self.run_id, content=final_content)
 
     def _clean_session_state_for_storage(self):
         """
