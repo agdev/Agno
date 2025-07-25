@@ -743,49 +743,6 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
 
         return None
 
-    def _run_agent_streaming(self, agent, message: str):
-        """
-        Run agent in streaming mode and yield results
-
-        Args:
-            agent: The agent to run
-            message: Message to send to agent
-
-        Yields:
-            str: Content from streaming chunks
-
-        Returns:
-            str: Final content for processing
-        """
-        response = agent.run(
-            message,
-            stream=True,
-            stream_intermediate_steps=self.stream_intermediate_steps,
-        )
-        final_content = ""
-
-        for chunk in response:  # Now pyright knows this is Iterator[RunResponseEvent]
-            content = self._extract_content_from_chunk(chunk)
-            if content:
-                final_content = content
-                if self.stream_intermediate_steps:
-                    yield content
-
-        return final_content
-
-    def _run_agent_single(self, agent, message: str):
-        """
-        Run agent in single response mode
-
-        Args:
-            agent: The agent to run
-            message: Message to send to agent
-
-        Returns:
-            RunResponse: Single response from agent
-        """
-        return agent.run(message, stream=False)  # Now pyright knows this is RunResponse
-
     def run(self, **kwargs: Any) -> Iterator[RunResponse]:  # type: ignore[override]
         """
         Main workflow execution implementing the three flow patterns:
@@ -836,14 +793,18 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
             # We know stream=True returns Iterator[RunResponseEvent]
             final_router_result = None
             for chunk in cast(Iterator[RunResponseEvent], category_response):
-                if hasattr(chunk, 'content') and chunk.content:
+                if hasattr(chunk, "content") and chunk.content:
                     final_router_result = chunk.content
                     if self.stream_intermediate_steps:
-                        yield RunResponse(run_id=self.run_id, content=str(chunk.content))
+                        yield RunResponse(
+                            run_id=self.run_id, content=str(chunk.content)
+                        )
 
             # Extract category from RouterResult object
             if final_router_result:
-                if hasattr(final_router_result, 'category') and not isinstance(final_router_result, str):
+                if hasattr(final_router_result, "category") and not isinstance(
+                    final_router_result, str
+                ):
                     category = final_router_result.category.strip().lower()
                     router_content = category
                 else:
@@ -851,6 +812,7 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
                     router_str = str(final_router_result)
                     if "category=" in router_str:
                         import re
+
                         match = re.search(r"category='([^']+)'", router_str)
                         category = match.group(1).strip().lower() if match else "chat"
                         router_content = category
@@ -1210,22 +1172,32 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
             stream_response = cast(Iterator[RunResponseEvent], response)
             final_chat_result = None
             for chunk in stream_response:  # chunk is RunResponseEvent
-                if hasattr(chunk, 'content') and chunk.content:
+                if hasattr(chunk, "content") and chunk.content:
                     final_chat_result = chunk.content
                     # Extract actual content from ChatResponse for streaming
-                    if hasattr(chunk.content, 'content') and not isinstance(chunk.content, str):
+                    if hasattr(chunk.content, "content") and not isinstance(
+                        chunk.content, str
+                    ):
                         chunk_content = chunk.content.content
                     else:
                         chunk_content = str(chunk.content)
-                    
+
                     # Yield streaming content
                     yield RunResponse(run_id=self.run_id, content=chunk_content)
 
             # Extract final content from ChatResponse object
-            if final_chat_result and hasattr(final_chat_result, 'content') and not isinstance(final_chat_result, str):
+            if (
+                final_chat_result
+                and hasattr(final_chat_result, "content")
+                and not isinstance(final_chat_result, str)
+            ):
                 final_content = final_chat_result.content
             else:
-                final_content = str(final_chat_result) if final_chat_result else "No response generated"
+                final_content = (
+                    str(final_chat_result)
+                    if final_chat_result
+                    else "No response generated"
+                )
         else:
             # Non-streaming response handling
             single_response = cast(RunResponse, response)
