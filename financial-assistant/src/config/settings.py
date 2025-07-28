@@ -62,6 +62,17 @@ class Settings(BaseSettings):
         None, description="Financial Modeling Prep API key for financial data"
     )
 
+    # Langfuse Configuration for Observability
+    langfuse_public_key: Optional[str] = Field(
+        None, description="Langfuse public key for tracing and observability"
+    )
+    langfuse_secret_key: Optional[str] = Field(
+        None, description="Langfuse secret key for tracing and observability"
+    )
+    langfuse_host: str = Field(
+        "http://localhost:3001", description="Langfuse host URL for local or remote instance"
+    )
+
     # LLM Configuration
     default_llm_provider: Annotated[
         str,
@@ -192,6 +203,15 @@ class Settings(BaseSettings):
     def has_financial_data_provider(self) -> bool:
         """Check if financial data provider is configured"""
         return self.financial_modeling_prep_api_key is not None
+
+    @property
+    def has_langfuse_configured(self) -> bool:
+        """Check if Langfuse observability is configured"""
+        return (
+            self.langfuse_public_key is not None 
+            and self.langfuse_secret_key is not None
+            and self.langfuse_host is not None
+        )
 
     @property
     def is_fully_configured(self) -> bool:

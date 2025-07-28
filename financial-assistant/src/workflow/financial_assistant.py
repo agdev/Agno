@@ -6,6 +6,9 @@ the entire financial assistant application using Agno's Level 5 Agentic Workflow
 """
 
 import asyncio
+
+# Langfuse imports for observability
+import os
 from datetime import datetime
 from typing import Any, Iterator, Optional, cast
 
@@ -15,6 +18,7 @@ from agno.run.response import RunResponse, RunResponseEvent
 from agno.storage.sqlite import SqliteStorage
 from agno.workflow import Workflow
 from config.settings import Settings
+from langfuse._client.observe import observe
 from models.schemas import (
     ChatResponse,
     ConversationMessage,
@@ -62,6 +66,15 @@ class FinancialAssistantWorkflow(Workflow):
 
         # Initialize settings
         self.settings = settings or Settings()
+
+        # Configure Langfuse environment variables if available
+        if self.settings.has_langfuse_configured:
+            if self.settings.langfuse_public_key:
+                os.environ["LANGFUSE_PUBLIC_KEY"] = self.settings.langfuse_public_key
+            if self.settings.langfuse_secret_key:
+                os.environ["LANGFUSE_SECRET_KEY"] = self.settings.langfuse_secret_key
+            if self.settings.langfuse_host:
+                os.environ["LANGFUSE_HOST"] = self.settings.langfuse_host
 
         # Initialize streaming parameters
         self.stream = stream
@@ -264,6 +277,7 @@ class FinancialAssistantWorkflow(Workflow):
                 f"Error retrieving financial data: {', '.join(str(exc) for exc in eg.exceptions)}"
             )
 
+    @observe(name="fetch_financial_data")
     def _fetch_financial_data_sequential(self, symbol: str):
         """
         Fetch financial data sequentially for sync workflow (avoids async complexity)
@@ -743,6 +757,7 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
 
         return None
 
+    @observe(name="financial_assistant_workflow")
     def run(self, **kwargs: Any) -> Iterator[RunResponse]:  # type: ignore[override]
         """
         Main workflow execution implementing the three flow patterns:
@@ -862,6 +877,7 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
     # REMOVED: async def arun() method - Agno framework conflicts with dual sync/async methods
     # TODO: Re-implement async support using proper Agno patterns in future iteration
 
+    @observe(name="report_flow")
     def _run_report_flow(self, message: str) -> Iterator[RunResponse]:
         """
         Comprehensive Report Flow - Parallel data collection + aggregation
@@ -1003,6 +1019,7 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
     # REMOVED: async def _arun_alone_flow() - Agno framework conflicts with dual sync/async methods
     # REMOVED: async def _arun_chat_flow() - Agno framework conflicts with dual sync/async methods
 
+    @observe(name="alone_flow")
     def _run_alone_flow(self, message: str, category: str) -> Iterator[RunResponse]:
         """
         Single Information Flow - Direct path to specific data
@@ -1141,6 +1158,7 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
             content=formatted_content,
         )
 
+    @observe(name="chat_flow")
     def _run_chat_flow(self, message: str) -> Iterator[RunResponse]:
         """
         Chat Flow - Direct conversational response (sync version)
