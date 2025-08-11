@@ -62,15 +62,18 @@ class Settings(BaseSettings):
         None, description="Financial Modeling Prep API key for financial data"
     )
 
-    # Langfuse Configuration for Observability
-    langfuse_public_key: Optional[str] = Field(
-        None, description="Langfuse public key for tracing and observability"
+    # LangWatch Configuration for Observability
+    langwatch_api_key: Optional[str] = Field(
+        None, description="LangWatch API key for tracing and observability"
     )
-    langfuse_secret_key: Optional[str] = Field(
-        None, description="Langfuse secret key for tracing and observability"
+    langwatch_endpoint: str = Field(
+        "https://app.langwatch.ai", description="LangWatch endpoint URL for cloud or self-hosted instance"
     )
-    langfuse_host: str = Field(
-        "http://localhost:3001", description="Langfuse host URL for local or remote instance"
+    langwatch_project_name: str = Field(
+        "financial-assistant", description="Project name for LangWatch traces"
+    )
+    langwatch_environment: str = Field(
+        "development", description="Environment name (development, staging, production)"
     )
 
     # LLM Configuration
@@ -205,13 +208,9 @@ class Settings(BaseSettings):
         return self.financial_modeling_prep_api_key is not None
 
     @property
-    def has_langfuse_configured(self) -> bool:
-        """Check if Langfuse observability is configured"""
-        return (
-            self.langfuse_public_key is not None 
-            and self.langfuse_secret_key is not None
-            and self.langfuse_host is not None
-        )
+    def has_langwatch_configured(self) -> bool:
+        """Check if LangWatch observability is configured"""
+        return self.langwatch_api_key is not None
 
     @property
     def is_fully_configured(self) -> bool:

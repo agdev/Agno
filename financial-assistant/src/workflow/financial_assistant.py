@@ -6,9 +6,6 @@ the entire financial assistant application using Agno's Level 5 Agentic Workflow
 """
 
 import asyncio
-
-# Langfuse imports for observability
-import os
 from datetime import datetime
 from typing import Any, Iterator, Optional, cast
 
@@ -18,7 +15,8 @@ from agno.run.response import RunResponse, RunResponseEvent
 from agno.storage.sqlite import SqliteStorage
 from agno.workflow import Workflow
 from config.settings import Settings
-from langfuse._client.observe import observe
+
+import langwatch
 from models.schemas import (
     ChatResponse,
     ConversationMessage,
@@ -26,6 +24,8 @@ from models.schemas import (
     RouterResult,
     WorkflowSummary,
 )
+
+# LangWatch imports for observability (using official decorators)
 
 # Import tools, models, and configuration
 from tools.financial_modeling_prep import FinancialModelingPrepTools
@@ -67,14 +67,37 @@ class FinancialAssistantWorkflow(Workflow):
         # Initialize settings
         self.settings = settings or Settings()
 
-        # Configure Langfuse environment variables if available
-        if self.settings.has_langfuse_configured:
-            if self.settings.langfuse_public_key:
-                os.environ["LANGFUSE_PUBLIC_KEY"] = self.settings.langfuse_public_key
-            if self.settings.langfuse_secret_key:
-                os.environ["LANGFUSE_SECRET_KEY"] = self.settings.langfuse_secret_key
-            if self.settings.langfuse_host:
-                os.environ["LANGFUSE_HOST"] = self.settings.langfuse_host
+        # Configure LangWatch if available
+        if self.settings.has_langwatch_configured:
+            try:
+                langwatch.setup(
+                    api_key=self.settings.langwatch_api_key,
+                    endpoint_url=self.settings.langwatch_endpoint,
+                    base_attributes={
+                        "project": self.settings.langwatch_project_name,
+                        "environment": self.settings.langwatch_environment,
+                        "version": "1.0.0",
+                        "service": "financial-assistant-agno"
+                    }
+                )
+                # Apply decorators dynamically when LangWatch is configured
+                self.run = langwatch.trace(name="financial_assistant_workflow")(self.run)
+                self._fetch_financial_data_sequential = langwatch.span(
+                    type="tool", name="fetch_financial_data"
+                )(self._fetch_financial_data_sequential)
+                self._run_report_flow = langwatch.span(
+                    type="chain", name="report_flow"
+                )(self._run_report_flow)
+                self._run_alone_flow = langwatch.span(
+                    type="chain", name="alone_flow"
+                )(self._run_alone_flow)
+                self._run_chat_flow = langwatch.span(
+                    type="chain", name="chat_flow"
+                )(self._run_chat_flow)
+                
+                print("✅ LangWatch decorators applied successfully")
+            except Exception as e:
+                print(f"⚠️  LangWatch setup failed: {e}")
 
         # Initialize streaming parameters
         self.stream = stream
@@ -271,13 +294,11 @@ class FinancialAssistantWorkflow(Workflow):
                 price_task.result(),
             ]
 
-        except* Exception as eg:
-            # Handle exception groups from failed tasks
-            raise Exception(
-                f"Error retrieving financial data: {', '.join(str(exc) for exc in eg.exceptions)}"
-            )
+        except Exception as e:
+            # Handle exception from failed tasks
+            raise Exception(f"Error retrieving financial data: {str(e)}")
 
-    @observe(name="fetch_financial_data")
+    # @langwatch.span(type="tool", name="fetch_financial_data")  # Applied conditionally in __init__
     def _fetch_financial_data_sequential(self, symbol: str):
         """
         Fetch financial data sequentially for sync workflow (avoids async complexity)
@@ -757,7 +778,7 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
 
         return None
 
-    @observe(name="financial_assistant_workflow")
+    # @langwatch.trace(name="financial_assistant_workflow")  # Applied conditionally in __init__
     def run(self, **kwargs: Any) -> Iterator[RunResponse]:  # type: ignore[override]
         """
         Main workflow execution implementing the three flow patterns:
@@ -877,7 +898,8 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
     # REMOVED: async def arun() method - Agno framework conflicts with dual sync/async methods
     # TODO: Re-implement async support using proper Agno patterns in future iteration
 
-    @observe(name="report_flow")
+    # Removed duplicate decorator - already has langwatch_span
+    # @langwatch.span(type="chain", name="report_flow")  # Applied conditionally in __init__
     def _run_report_flow(self, message: str) -> Iterator[RunResponse]:
         """
         Comprehensive Report Flow - Parallel data collection + aggregation
@@ -1019,7 +1041,8 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
     # REMOVED: async def _arun_alone_flow() - Agno framework conflicts with dual sync/async methods
     # REMOVED: async def _arun_chat_flow() - Agno framework conflicts with dual sync/async methods
 
-    @observe(name="alone_flow")
+    # Removed duplicate decorator - already has langwatch_span
+    # @langwatch.span(type="chain", name="alone_flow")  # Applied conditionally in __init__
     def _run_alone_flow(self, message: str, category: str) -> Iterator[RunResponse]:
         """
         Single Information Flow - Direct path to specific data
@@ -1158,7 +1181,8 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
             content=formatted_content,
         )
 
-    @observe(name="chat_flow")
+    # Removed duplicate decorator - already has langwatch_span
+    # @langwatch.span(type="chain", name="chat_flow")  # Applied conditionally in __init__
     def _run_chat_flow(self, message: str) -> Iterator[RunResponse]:
         """
         Chat Flow - Direct conversational response (sync version)

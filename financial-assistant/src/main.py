@@ -9,6 +9,7 @@ import uuid
 from datetime import datetime
 from typing import Generator, Optional
 
+# import langwatch  # Removed - handled in workflow initialization
 import streamlit as st
 
 # Import our workflow and models
@@ -18,6 +19,9 @@ from agno.models.openai import OpenAIChat
 from agno.storage.sqlite import SqliteStorage
 from config.settings import Settings
 from workflow.financial_assistant import FinancialAssistantWorkflow
+
+# LangWatch setup is now handled in the workflow initialization
+# No need for global setup here
 
 
 # Initialize settings
@@ -295,14 +299,19 @@ def setup_sidebar(settings: Settings):
 
             # Check if streaming settings changed
             current_stream = st.session_state.get("streaming_enabled", False)
-            current_intermediate = st.session_state.get("stream_intermediate_steps", False)
+            current_intermediate = st.session_state.get(
+                "stream_intermediate_steps", False
+            )
             last_stream = getattr(st.session_state, "last_streaming_enabled", None)
-            last_intermediate = getattr(st.session_state, "last_stream_intermediate_steps", None)
-            
+            last_intermediate = getattr(
+                st.session_state, "last_stream_intermediate_steps", None
+            )
+
             # Initialize workflow if provider changed, streaming settings changed, or not initialized
             if (
                 st.session_state.workflow is None
-                or getattr(st.session_state, "current_provider", None) != selected_provider
+                or getattr(st.session_state, "current_provider", None)
+                != selected_provider
                 or last_stream != current_stream
                 or last_intermediate != current_intermediate
             ):
@@ -324,7 +333,9 @@ def setup_sidebar(settings: Settings):
                             storage=storage,
                             session_id=composite_session_id,
                             stream=st.session_state.get("streaming_enabled", False),
-                            stream_intermediate_steps=st.session_state.get("stream_intermediate_steps", False),
+                            stream_intermediate_steps=st.session_state.get(
+                                "stream_intermediate_steps", False
+                            ),
                         )
                         st.session_state.current_provider = selected_provider
                         st.session_state.settings = (
@@ -332,10 +343,16 @@ def setup_sidebar(settings: Settings):
                         )
                         # Track streaming settings to detect changes
                         st.session_state.last_streaming_enabled = current_stream
-                        st.session_state.last_stream_intermediate_steps = current_intermediate
-                        
-                        streaming_status = "with streaming" if current_stream else "without streaming"
-                        st.success(f"✅ Using {selected_provider.title()} {streaming_status}")
+                        st.session_state.last_stream_intermediate_steps = (
+                            current_intermediate
+                        )
+
+                        streaming_status = (
+                            "with streaming" if current_stream else "without streaming"
+                        )
+                        st.success(
+                            f"✅ Using {selected_provider.title()} {streaming_status}"
+                        )
                     else:
                         st.error(f"❌ Failed to initialize {selected_provider}")
                         st.session_state.api_configured = False
@@ -362,16 +379,16 @@ def setup_sidebar(settings: Settings):
             "Enable Response Streaming",
             value=st.session_state.get("streaming_enabled", True),
             help="Stream responses as they are generated for faster feedback",
-            key="streaming_toggle"
+            key="streaming_toggle",
         )
         st.session_state.streaming_enabled = streaming_enabled
-        
+
         if streaming_enabled:
             stream_intermediate = st.checkbox(
                 "Show Intermediate Steps",
                 value=st.session_state.get("stream_intermediate_steps", False),
                 help="Display agent reasoning steps during streaming",
-                key="intermediate_toggle"
+                key="intermediate_toggle",
             )
             st.session_state.stream_intermediate_steps = stream_intermediate
         else:
@@ -475,7 +492,7 @@ def process_user_input(user_input: str) -> Generator[str, None, None]:
 
         # Process through workflow - Agno workflows return Iterator[RunResponse]
         responses = st.session_state.workflow.run(message=user_input)
-        
+
         if responses is None:
             yield "❌ DEBUG: Workflow returned None instead of iterator"
             return
@@ -552,11 +569,16 @@ def main():
                     for response_chunk in process_user_input(prompt):
                         chunk_count += 1
                         # For streaming, each chunk should be displayed as it arrives
-                        full_response = response_chunk  # Each chunk is the complete response so far
+                        full_response = (
+                            response_chunk  # Each chunk is the complete response so far
+                        )
                         response_placeholder.markdown(full_response)
-                        
+
                     # Debug: Show chunk count if streaming is enabled
-                    if st.session_state.get("streaming_enabled", True) and chunk_count > 1:
+                    if (
+                        st.session_state.get("streaming_enabled", True)
+                        and chunk_count > 1
+                    ):
                         st.caption(f"🔄 Streamed in {chunk_count} chunks")
                 except Exception as e:
                     error_message = f"❌ An error occurred: {str(e)}"

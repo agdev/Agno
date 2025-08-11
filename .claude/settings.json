@@ -1,0 +1,77 @@
+{  
+  "permissions": {
+    "allow": [
+      "mcp__agno-docs__fetch_agno_documentation",
+      "Bash(find:*)",
+      "mcp__agno-docs__search_agno_documentation",
+      "WebFetch(domain:docs.agno.com)",
+      "mcp__agno-docs__search_agno_code",
+      "mcp__agno-docs__fetch_generic_url_content",
+      "mcp__Context-7__resolve-library-id",
+      "mcp__Context-7__get-library-docs",
+      "Bash(mkdir:*)",
+      "Bash(uv init:*)",
+      "Bash(uv venv:*)",
+      "Bash(ls:*)",
+      "Bash(touch:*)",
+      "Bash(uv add:*)",
+      "Bash(git init:*)",
+      "Bash(uv run:*)",
+      "Bash(git add:*)",
+      "Bash(python:*)",
+      "Bash(grep:*)",
+      "mcp__ide__getDiagnostics",
+      "Bash(pyright:*)",
+      "Bash(cp:*)",
+      "Bash(rm:*)",
+      "Bash(env)",
+      "WebFetch(domain:docs.anthropic.com)",
+      "WebFetch(domain:github.com)",
+      "Bash(pyenv:*)",
+      "WebFetch(domain:docs.astral.sh)",
+      "Bash(chmod:*)",
+      "Bash(uv sync:*)",
+      "Bash(source:*)",
+      "Bash(timeout 10 uv run streamlit run:*)",
+      "WebFetch(domain:docs.python.org)",
+      "Bash(curl:*)",
+      "Bash(sqlite3:*)",
+      "mcp__grep-mcp__grep_query",
+      "Bash(pkill:*)",
+      "WebFetch(domain:agno.link)",
+      "Bash(cat:*)",
+      "Bash(true)",
+      "mcp__deepwiki__read_wiki_structure",
+      "Bash(true)",
+      "Bash(PYTHONPATH=src uv run:*)",
+      "Bash(PYTHONPATH=src python3:*)",
+      "mcp__grep-mcp__grep_query",
+      "Bash(curl:*)",
+      "Bash(pkill:*)",
+      "Bash(echo:*)",
+      "mcp__deepwiki__ask_question",
+      "Bash(kill:*)",
+      "Bash(timeout 10s uv run streamlit run:*)"
+    ],
+    "deny": []
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|MultiEdit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/yoda/Library/Projects/Portfolio/Agno/.claude/hooks/post_edit_pyright_hook.sh",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "/home/yoda/Library/Projects/Portfolio/Agno/.claude/hooks/post_edit_ruff_hook.sh",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}
