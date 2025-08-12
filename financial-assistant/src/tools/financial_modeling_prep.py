@@ -11,7 +11,6 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Union
 
 import aiohttp
-import langwatch
 from agno.tools.toolkit import Toolkit
 from config.settings import Settings
 from models.schemas import (
@@ -97,7 +96,6 @@ class FinancialModelingPrepTools(Toolkit):
         except asyncio.TimeoutError as e:
             raise Exception(f"Request timeout after {self.timeout} seconds: {str(e)}")
 
-    @langwatch.span(type="tool", name="search_symbol")
     async def search_symbol(self, query: str) -> SymbolSearchResult:
         """
         Search for stock symbols by company name or partial ticker
@@ -158,7 +156,6 @@ class FinancialModelingPrepTools(Toolkit):
                 error=str(e)
             )
 
-    @langwatch.span(type="tool", name="get_income_statement")
     async def get_income_statement(
         self, symbol: str, period: str = "annual", limit: int = 1
     ) -> IncomeStatementData:
@@ -244,7 +241,6 @@ class FinancialModelingPrepTools(Toolkit):
                 success=False
             )
 
-    @langwatch.span(type="tool", name="get_company_financials")
     async def get_company_financials(self, symbol: str) -> CompanyFinancialsData:
         """
         Get comprehensive company financial metrics and ratios
@@ -365,7 +361,6 @@ class FinancialModelingPrepTools(Toolkit):
                 success=False
             )
 
-    @langwatch.span(type="tool", name="get_stock_price")
     async def get_stock_price(self, symbol: str) -> StockPriceData:
         """
         Get current stock price and trading information
@@ -471,7 +466,6 @@ class FinancialModelingPrepTools(Toolkit):
                 success=False
             )
 
-    @langwatch.span(type="tool", name="get_company_profile")
     async def get_company_profile(self, symbol: str) -> CompanyProfileData:
         """
         Get basic company profile information
