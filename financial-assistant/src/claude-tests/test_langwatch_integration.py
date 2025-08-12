@@ -18,19 +18,14 @@ def test_langwatch_setup():
     print("Testing LangWatch Integration...")
     print("-" * 50)
 
-    # Test 1: Import check
+    # Test 1: Import check (now using official LangWatch decorators)
     try:
-        from observability.langwatch_decorator import (
-            LANGWATCH_AVAILABLE,
-            langwatch_span,
-            langwatch_trace,
-            setup_langwatch,
-        )
-
-        print("✅ LangWatch decorators imported successfully")
-        print(f"   LangWatch available: {LANGWATCH_AVAILABLE}")
+        import langwatch
+        
+        print("✅ Official LangWatch SDK imported successfully")
+        print("   Using official decorators instead of custom ones")
     except ImportError as e:
-        print(f"❌ Failed to import LangWatch decorators: {e}")
+        print(f"❌ Failed to import LangWatch SDK: {e}")
         return False
 
     # Test 2: Settings configuration
@@ -56,8 +51,7 @@ def test_langwatch_setup():
 
     # Test 5: Simple decorator test
     try:
-
-        @langwatch_trace(name="test_function", type="test")
+        @langwatch.trace(name="test_function")
         def test_function():
             return "Test successful"
 

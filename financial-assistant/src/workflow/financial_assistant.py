@@ -310,9 +310,22 @@ class FinancialAssistantWorkflow(Workflow):
             Tuple of (income_data, financials_data, price_data)
         """
         try:
-            income_data, financials_data, price_data = asyncio.run(
-                self._fetch_parallel_financial_data(symbol)
-            )
+            # Initialize variables to prevent unbound variable errors
+            income_data = None
+            financials_data = None  
+            price_data = None
+            
+            # Add manual span context management around async calls
+            with langwatch.span(type="tool", name="parallel_data_fetch") as span:
+                span.update(inputs={"symbol": symbol})
+                income_data, financials_data, price_data = asyncio.run(
+                    self._fetch_parallel_financial_data(symbol)
+                )
+                span.update(outputs={
+                    "income_records": len(income_data) if income_data else 0,
+                    "financial_records": len(financials_data) if financials_data else 0,
+                    "price_available": price_data is not None
+                })
             # Fetch data sequentially to avoid any async/parallel complexity
             # income_data = asyncio.run(self.fmp_tools.get_income_statement(symbol))
             # financials_data = asyncio.run(self.fmp_tools.get_company_financials(symbol))
@@ -816,63 +829,56 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
 
         # Get conversation context for agents
         conversation_context = self._get_conversation_context()
+        
+        # Initialize variables to prevent unbound variable errors
+        category = "chat"
+        router_content = "chat"
 
         # Step 1: Route the request with conversation context
-        category_response = self.router_agent.run(
-            f"User request: {message}\n{conversation_context}",
-            stream=self.stream,
-            stream_intermediate_steps=self.stream_intermediate_steps,
-        )
+        with langwatch.span(type="agent", name="router_agent") as router_span:
+            router_span.update(inputs={"message": message, "context": conversation_context})
+            category_response = self.router_agent.run(
+                f"User request: {message}\n{conversation_context}",
+                stream=self.stream,
+                stream_intermediate_steps=self.stream_intermediate_steps,
+            )
+            
+            # Handle streaming vs non-streaming response processing within span
+            if self.stream:
+                # We know stream=True returns Iterator[RunResponseEvent]
+                final_router_result = None
+                for chunk in cast(Iterator[RunResponseEvent], category_response):
+                    final_router_result = chunk
 
-        # Handle streaming vs non-streaming response with cast for type safety
-        if self.stream:
-            # We know stream=True returns Iterator[RunResponseEvent]
-            final_router_result = None
-            for chunk in cast(Iterator[RunResponseEvent], category_response):
-                if hasattr(chunk, "content") and chunk.content:
-                    final_router_result = chunk.content
-                    if self.stream_intermediate_steps:
-                        yield RunResponse(
-                            run_id=self.run_id, content=str(chunk.content)
-                        )
-
-            # Extract category from RouterResult object
-            if final_router_result:
-                if hasattr(final_router_result, "category") and not isinstance(
-                    final_router_result, str
-                ):
-                    category = final_router_result.category.strip().lower()
-                    router_content = category
-                else:
-                    # If it's a string representation, extract category
-                    router_str = str(final_router_result)
-                    if "category=" in router_str:
-                        import re
-
-                        match = re.search(r"category='([^']+)'", router_str)
-                        category = match.group(1).strip().lower() if match else "chat"
+                # Get the final response
+                if final_router_result and hasattr(final_router_result, "content"):
+                    category_content = final_router_result.content
+                    # Extract category from the content
+                    if category_content and hasattr(category_content, "category") and not isinstance(category_content, str):
+                        category = category_content.category.strip().lower()
                         router_content = category
                     else:
-                        router_content = router_str
+                        router_content = str(category_content)
                         category = "chat"
-            else:
-                router_content = "chat"
-                category = "chat"
-        else:
-            # We know stream=False returns RunResponse
-            single_response = cast(RunResponse, category_response)
-            if hasattr(single_response, "content") and single_response.content:
-                if hasattr(single_response.content, "category"):
-                    # RouterResult object with category attribute
-                    category = single_response.content.category.strip().lower()
-                    router_content = category
                 else:
-                    # Fallback - shouldn't happen with structured output
-                    router_content = str(single_response.content)
-                    category = "chat"
+                    category_content = "chat"
             else:
-                router_content = "chat"
-                category = "chat"
+                # We know stream=False returns RunResponse
+                single_response = cast(RunResponse, category_response)
+                if hasattr(single_response, "content") and single_response.content:
+                    if hasattr(single_response.content, "category"):
+                        # RouterResult object with category attribute
+                        category = single_response.content.category.strip().lower()
+                        router_content = category
+                    else:
+                        # Fallback - shouldn't happen with structured output
+                        router_content = str(single_response.content)
+                        category = "chat"
+            
+            # Update span with output
+            router_span.update(outputs={"category": category, "content": router_content})
+
+        # Router processing is now handled inside the span above
 
         # Track router agent response
         router_message = ConversationMessage(
@@ -887,13 +893,25 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
         category = category.strip().lower()
         self.session_state["category"] = category
 
-        # Step 2: Conditional flow based on category - use sync methods
+        # Step 2: Conditional flow based on category - use sync methods with span context
         if category == "report":
-            yield from self._run_report_flow(message)
+            # Create manual span for report flow to ensure context propagation
+            with langwatch.span(type="chain", name="report_flow_execution") as span:
+                span.update(inputs={"message": message, "category": "report"})
+                for response in self._run_report_flow(message):
+                    yield response
         elif category == "chat":
-            yield from self._run_chat_flow(message)
+            # Create manual span for chat flow to ensure context propagation  
+            with langwatch.span(type="chain", name="chat_flow_execution") as span:
+                span.update(inputs={"message": message, "category": "chat"})
+                for response in self._run_chat_flow(message):
+                    yield response
         else:  # income_statement, company_financials, stock_price
-            yield from self._run_alone_flow(message, category)
+            # Create manual span for alone flow to ensure context propagation
+            with langwatch.span(type="chain", name="alone_flow_execution") as span:
+                span.update(inputs={"message": message, "category": category})
+                for response in self._run_alone_flow(message, category):
+                    yield response
 
     # REMOVED: async def arun() method - Agno framework conflicts with dual sync/async methods
     # TODO: Re-implement async support using proper Agno patterns in future iteration
@@ -917,11 +935,14 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
 
         # Extract symbol with conversation context
         conversation_context = self._get_conversation_context()
-        symbol_response = self.symbol_extraction_agent.run(
-            f"Extract symbol from: {message}\n{conversation_context}",
-            stream=self.stream,
-            stream_intermediate_steps=self.stream_intermediate_steps,
-        )
+        symbol_response = None  # Initialize to prevent unbound variable error
+        with langwatch.span(type="agent", name="symbol_extraction_agent_report") as symbol_span:
+            symbol_span.update(inputs={"message": message, "context": conversation_context})
+            symbol_response = self.symbol_extraction_agent.run(
+                f"Extract symbol from: {message}\n{conversation_context}",
+                stream=self.stream,
+                stream_intermediate_steps=self.stream_intermediate_steps,
+            )
 
         # Handle streaming vs non-streaming response for symbol extraction (type-safe)
         if self.stream:
@@ -1060,11 +1081,14 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
 
         # Extract symbol with conversation context
         conversation_context = self._get_conversation_context()
-        symbol_response = self.symbol_extraction_agent.run(
-            f"Extract symbol from: {message}\n{conversation_context}",
-            stream=self.stream,
-            stream_intermediate_steps=self.stream_intermediate_steps,
-        )
+        symbol_response = None  # Initialize to prevent unbound variable error
+        with langwatch.span(type="agent", name="symbol_extraction_agent_alone") as symbol_span:
+            symbol_span.update(inputs={"message": message, "context": conversation_context, "category": category})
+            symbol_response = self.symbol_extraction_agent.run(
+                f"Extract symbol from: {message}\n{conversation_context}",
+                stream=self.stream,
+                stream_intermediate_steps=self.stream_intermediate_steps,
+            )
 
         # Handle streaming vs non-streaming response for symbol extraction (type-safe)
         if self.stream:

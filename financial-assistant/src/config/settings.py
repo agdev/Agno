@@ -12,6 +12,7 @@ from typing import List, Literal, Optional, Tuple
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing_extensions import Annotated
+from dotenv import load_dotenv
 
 
 def find_env_file() -> Optional[str]:
@@ -36,6 +37,12 @@ def find_env_file() -> Optional[str]:
         return str(cwd_env)
 
     return None
+
+
+# Load .env file into os.environ immediately when this module is imported
+# This ensures all environment variables are available to any library (like LangWatch)
+# that expects them in os.environ at import time
+load_dotenv(find_env_file())
 
 
 class Settings(BaseSettings):
@@ -158,7 +165,7 @@ class Settings(BaseSettings):
     )
 
     model_config = SettingsConfigDict(
-        env_file=find_env_file(),  # Automatically find .env file
+        # env_file removed - variables already loaded into os.environ above
         env_file_encoding="utf-8",
         case_sensitive=False,
         populate_by_name=True,  # Allow field names and aliases
