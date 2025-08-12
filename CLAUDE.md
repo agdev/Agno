@@ -245,3 +245,4 @@ This project follows strict development standards documented in the `docs/rules/
 
 - place your test files in @financial-assistant/src/tests/ folder
 - all your test files that you create during your work place in /home/yoda/Library/Projects/Portfolio/Agno/financial-assistant/src/claude-tests
+- when you create a test file place it under @financial-assistant/src/claude-tests/ folder

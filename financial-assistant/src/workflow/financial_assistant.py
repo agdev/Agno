@@ -9,14 +9,13 @@ import asyncio
 from datetime import datetime
 from typing import Any, Iterator, Optional, cast
 
+import langwatch
 from agno.agent import Agent
 from agno.models.anthropic import Claude
 from agno.run.response import RunResponse, RunResponseEvent
 from agno.storage.sqlite import SqliteStorage
 from agno.workflow import Workflow
 from config.settings import Settings
-
-import langwatch
 from models.schemas import (
     ChatResponse,
     ConversationMessage,
@@ -26,7 +25,6 @@ from models.schemas import (
 )
 
 # LangWatch imports for observability (using official decorators)
-
 # Import tools, models, and configuration
 from tools.financial_modeling_prep import FinancialModelingPrepTools
 
@@ -77,24 +75,26 @@ class FinancialAssistantWorkflow(Workflow):
                         "project": self.settings.langwatch_project_name,
                         "environment": self.settings.langwatch_environment,
                         "version": "1.0.0",
-                        "service": "financial-assistant-agno"
-                    }
+                        "service": "financial-assistant-agno",
+                    },
                 )
                 # Apply decorators dynamically when LangWatch is configured
-                self.run = langwatch.trace(name="financial_assistant_workflow")(self.run)
+                self.run = langwatch.trace(name="financial_assistant_workflow")(
+                    self.run
+                )
                 self._fetch_financial_data_sequential = langwatch.span(
                     type="tool", name="fetch_financial_data"
                 )(self._fetch_financial_data_sequential)
                 self._run_report_flow = langwatch.span(
                     type="chain", name="report_flow"
                 )(self._run_report_flow)
-                self._run_alone_flow = langwatch.span(
-                    type="chain", name="alone_flow"
-                )(self._run_alone_flow)
-                self._run_chat_flow = langwatch.span(
-                    type="chain", name="chat_flow"
-                )(self._run_chat_flow)
-                
+                self._run_alone_flow = langwatch.span(type="chain", name="alone_flow")(
+                    self._run_alone_flow
+                )
+                self._run_chat_flow = langwatch.span(type="chain", name="chat_flow")(
+                    self._run_chat_flow
+                )
+
                 print("✅ LangWatch decorators applied successfully")
             except Exception as e:
                 print(f"⚠️  LangWatch setup failed: {e}")
@@ -312,20 +312,24 @@ class FinancialAssistantWorkflow(Workflow):
         try:
             # Initialize variables to prevent unbound variable errors
             income_data = None
-            financials_data = None  
+            financials_data = None
             price_data = None
-            
+
             # Add manual span context management around async calls
             with langwatch.span(type="tool", name="parallel_data_fetch") as span:
                 span.update(inputs={"symbol": symbol})
                 income_data, financials_data, price_data = asyncio.run(
                     self._fetch_parallel_financial_data(symbol)
                 )
-                span.update(outputs={
-                    "income_records": len(income_data) if income_data else 0,
-                    "financial_records": len(financials_data) if financials_data else 0,
-                    "price_available": price_data is not None
-                })
+                span.update(
+                    outputs={
+                        "income_records": len(income_data) if income_data else 0,
+                        "financial_records": len(financials_data)
+                        if financials_data
+                        else 0,
+                        "price_available": price_data is not None,
+                    }
+                )
             # Fetch data sequentially to avoid any async/parallel complexity
             # income_data = asyncio.run(self.fmp_tools.get_income_statement(symbol))
             # financials_data = asyncio.run(self.fmp_tools.get_company_financials(symbol))
@@ -829,20 +833,22 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
 
         # Get conversation context for agents
         conversation_context = self._get_conversation_context()
-        
+
         # Initialize variables to prevent unbound variable errors
         category = "chat"
         router_content = "chat"
 
         # Step 1: Route the request with conversation context
         with langwatch.span(type="agent", name="router_agent") as router_span:
-            router_span.update(inputs={"message": message, "context": conversation_context})
+            router_span.update(
+                inputs={"message": message, "context": conversation_context}
+            )
             category_response = self.router_agent.run(
                 f"User request: {message}\n{conversation_context}",
                 stream=self.stream,
                 stream_intermediate_steps=self.stream_intermediate_steps,
             )
-            
+            router_span.update(inputs={"category": category})
             # Handle streaming vs non-streaming response processing within span
             if self.stream:
                 # We know stream=True returns Iterator[RunResponseEvent]
@@ -854,7 +860,11 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
                 if final_router_result and hasattr(final_router_result, "content"):
                     category_content = final_router_result.content
                     # Extract category from the content
-                    if category_content and hasattr(category_content, "category") and not isinstance(category_content, str):
+                    if (
+                        category_content
+                        and hasattr(category_content, "category")
+                        and not isinstance(category_content, str)
+                    ):
                         category = category_content.category.strip().lower()
                         router_content = category
                     else:
@@ -874,9 +884,11 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
                         # Fallback - shouldn't happen with structured output
                         router_content = str(single_response.content)
                         category = "chat"
-            
+
             # Update span with output
-            router_span.update(outputs={"category": category, "content": router_content})
+            router_span.update(
+                outputs={"category": category, "content": router_content}
+            )
 
         # Router processing is now handled inside the span above
 
@@ -901,7 +913,7 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
                 for response in self._run_report_flow(message):
                     yield response
         elif category == "chat":
-            # Create manual span for chat flow to ensure context propagation  
+            # Create manual span for chat flow to ensure context propagation
             with langwatch.span(type="chain", name="chat_flow_execution") as span:
                 span.update(inputs={"message": message, "category": "chat"})
                 for response in self._run_chat_flow(message):
@@ -936,8 +948,12 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
         # Extract symbol with conversation context
         conversation_context = self._get_conversation_context()
         symbol_response = None  # Initialize to prevent unbound variable error
-        with langwatch.span(type="agent", name="symbol_extraction_agent_report") as symbol_span:
-            symbol_span.update(inputs={"message": message, "context": conversation_context})
+        with langwatch.span(
+            type="agent", name="symbol_extraction_agent_report"
+        ) as symbol_span:
+            symbol_span.update(
+                inputs={"message": message, "context": conversation_context}
+            )
             symbol_response = self.symbol_extraction_agent.run(
                 f"Extract symbol from: {message}\n{conversation_context}",
                 stream=self.stream,
@@ -1082,8 +1098,16 @@ Comprehensive financial analysis of {company_name} ({symbol}) based on latest av
         # Extract symbol with conversation context
         conversation_context = self._get_conversation_context()
         symbol_response = None  # Initialize to prevent unbound variable error
-        with langwatch.span(type="agent", name="symbol_extraction_agent_alone") as symbol_span:
-            symbol_span.update(inputs={"message": message, "context": conversation_context, "category": category})
+        with langwatch.span(
+            type="agent", name="symbol_extraction_agent_alone"
+        ) as symbol_span:
+            symbol_span.update(
+                inputs={
+                    "message": message,
+                    "context": conversation_context,
+                    "category": category,
+                }
+            )
             symbol_response = self.symbol_extraction_agent.run(
                 f"Extract symbol from: {message}\n{conversation_context}",
                 stream=self.stream,
